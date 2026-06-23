@@ -1,5 +1,5 @@
 /**
- * `infracodebase config <set-url>` — edit persisted settings without re-running
+ * `infracodebase config <set-url>` - edit persisted settings without re-running
  * the full setup wizard.
  */
 

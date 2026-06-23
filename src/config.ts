@@ -88,7 +88,7 @@ export interface ConfigPatch {
 
 /**
  * Merge a patch into the persisted config and save it, leaving untouched fields
- * (and the token) intact. Requires an existing config — you need a token first.
+ * (and the token) intact. Requires an existing config - you need a token first.
  * Returns the validated, saved config.
  */
 export async function updateConfig(patch: ConfigPatch): Promise<Config> {

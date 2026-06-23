@@ -6,7 +6,7 @@ up and **testing the server locally** before you publish or open a PR.
 ## Prerequisites
 
 - **Node.js ≥ 20** (see `engines` in `package.json`)
-- An infracodebase API token for live testing — get one at
+- An infracodebase API token for live testing - get one at
   https://infracodebase.com/settings/tokens
 
 ## Setup
@@ -44,7 +44,7 @@ src/
 ## Testing locally
 
 The published install uses `npx @infracodebase/mcp`. Locally you skip npx
-and hit your built entry point instead. There are three equivalents — pick one:
+and hit your built entry point instead. There are three equivalents - pick one:
 
 ```bash
 # 1. Run the built entry point directly
@@ -69,7 +69,7 @@ node dist/index.js auth status      # → ✓ valid + the enterprises the token 
 ### 1. Offline smoke test (no token, no network)
 
 `initialize` and `tools/list` don't touch the API, so you can verify the MCP
-protocol layer anywhere — handy in CI or on a plane:
+protocol layer anywhere - handy in CI or on a plane:
 
 ```bash
 npm smoke
@@ -79,7 +79,7 @@ This builds, performs the `initialize` handshake, and asserts `tools/list`
 returns all 14 tools. It exits non-zero on failure, so it's safe to wire into
 CI. (See `scripts/smoke.mjs`.)
 
-### 2. Drive the tools interactively — MCP Inspector
+### 2. Drive the tools interactively - MCP Inspector
 
 The fastest way to exercise real tool calls is the official Inspector, which
 gives you a web UI to invoke each tool with arguments:

@@ -2,7 +2,7 @@
  * Tool input schemas (as Zod raw shapes) and shared parsing helpers.
  *
  * McpServer.registerTool takes a raw shape, auto-generates the JSON Schema shown
- * to clients, and validates arguments before the handler runs — so these shapes
+ * to clients, and validates arguments before the handler runs - so these shapes
  * are the single source of truth for both validation and the tools/list output.
  */
 

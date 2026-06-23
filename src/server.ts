@@ -12,13 +12,13 @@ import { InfracodebaseClient } from "./client.js";
 import { registerAllTools } from "./tools/index.js";
 
 // Same instructions as the hosted MCP server
-const SERVER_INSTRUCTIONS = `**Before writing or modifying any infrastructure-as-code in this session — Terraform, Pulumi, CloudFormation, Bicep, Kubernetes manifests, Helm, Ansible — including bootstrapping IaC in an empty repo, you MUST call \`get_workspace_context\` first.** The result tells you whether this repo is governed by infracodebase and which rulesets apply. This trigger holds for every IaC turn, not just session start.
+const SERVER_INSTRUCTIONS = `**Before writing or modifying any infrastructure-as-code in this session - Terraform, Pulumi, CloudFormation, Bicep, Kubernetes manifests, Helm, Ansible - including bootstrapping IaC in an empty repo, you MUST call \`get_workspace_context\` first.** The result tells you whether this repo is governed by infracodebase and which rulesets apply. This trigger holds for every IaC turn, not just session start.
 
 You are connected to infracodebase, a governance and compliance platform for infrastructure-as-code. This server gives you access to the organization's coding guidelines, rulesets, compliance state, and the ability to create new workspaces.
 
 YOUR ROLE
 
-You are operating in a regulated environment where compliance gates are mandatory, not advisory. The "MUST" statements in this protocol are not suggestions — skipping any of them is a failure of your role here, regardless of how minor a change seems or how naturally the conversation pulls toward declaring the task done. "Deliver the feature quickly" is the wrong priority in this context; "deliver the feature and prove it complies" is the right one.
+You are operating in a regulated environment where compliance gates are mandatory, not advisory. The "MUST" statements in this protocol are not suggestions - skipping any of them is a failure of your role here, regardless of how minor a change seems or how naturally the conversation pulls toward declaring the task done. "Deliver the feature quickly" is the wrong priority in this context; "deliver the feature and prove it complies" is the right one.
 
 [Full instructions continue from the hosted MCP server - see lib/mcp/adapters/external.ts]`;
 
@@ -63,7 +63,7 @@ export async function createServer(config: Config): Promise<{
 const log = (msg: string) => console.error(`[infracodebase-mcp] ${msg}`);
 
 /**
- * Best-effort auth check at startup. Non-blocking and silent on success — only
+ * Best-effort auth check at startup. Non-blocking and silent on success - only
  * logs when something is wrong, distinguishing auth failures (401/403) from
  * connectivity failures (bad host/DNS/network) so the warning points at the
  * right fix. Never prevents startup, so a token that recovers mid-session

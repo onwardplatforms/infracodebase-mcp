@@ -1,5 +1,5 @@
 /**
- * `infracodebase auth <status|logout>` — inspect and clear the cached token.
+ * `infracodebase auth <status|logout>` - inspect and clear the cached token.
  */
 
 import {
@@ -49,7 +49,7 @@ async function status(overrides: ConfigOverrides): Promise<void> {
 
 async function logout(): Promise<void> {
   const removed = await deleteConfig();
-  console.log(removed ? `Logged out — removed ${CONFIG_PATH}.` : "Nothing to do — no cached config found.");
+  console.log(removed ? `Logged out - removed ${CONFIG_PATH}.` : "Nothing to do - no cached config found.");
 }
 
 export async function authCommand(argv: string[], overrides: ConfigOverrides): Promise<void> {

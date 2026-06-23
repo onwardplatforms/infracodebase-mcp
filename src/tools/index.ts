@@ -1,5 +1,5 @@
 /**
- * Tool registry — registers every MCP tool on the McpServer.
+ * Tool registry - registers every MCP tool on the McpServer.
  *
  * McpServer.registerTool(name, { description, inputSchema }, handler) handles the
  * tools/list and tools/call wiring, generates the JSON Schema from the Zod shape,

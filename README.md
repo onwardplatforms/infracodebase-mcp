@@ -26,7 +26,7 @@ Add `--api-url` (or set `INFRACODEBASE_API_URL`); unset, it targets the SaaS.
 npx @infracodebase/mcp init --token=icb_pat_xxx --api-url=https://infra.your-company.com/api/v1
 ```
 
-No public npm access? Run from a clone instead — same server:
+No public npm access? Run from a clone instead - same server:
 
 ```bash
 git clone https://github.com/infracodebase/mcp.git
@@ -48,7 +48,7 @@ Token and API URL resolve from flag → env var → `~/.infracodebase/config.jso
 ## CLI
 
 ```bash
-infracodebase                          # Start the server (stdio) — default
+infracodebase                          # Start the server (stdio) - default
 infracodebase init                     # Validate token, save config
 infracodebase auth status | logout     # Show / remove saved config
 infracodebase config get | set <k> <v> # Read / change a setting (api-url)
