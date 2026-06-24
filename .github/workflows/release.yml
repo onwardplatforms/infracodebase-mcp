@@ -153,10 +153,12 @@ jobs:
             exit 0
           fi
 
-          # The current version is the last v* tag (or empty on first release).
+          # The current version is the last v* tag. Before the first tag exists
+          # INPUT_LAST_TAG is a commit SHA, so fall back to package.json's
+          # version as the baseline — never below what's already declared.
           CURRENT_VERSION="${INPUT_LAST_TAG#v}"
           if [[ ! "$CURRENT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            CURRENT_VERSION="0.0.0"
+            CURRENT_VERSION=$(jq -r .version package.json)
           fi
 
           # Prompt template (quoted heredoc prevents shell expansion).
