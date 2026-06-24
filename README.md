@@ -29,8 +29,8 @@ npx @infracodebase/mcp init --token=icb_pat_xxx --api-url=https://infra.your-com
 No public npm access? Run from a clone instead - same server:
 
 ```bash
-git clone https://github.com/infracodebase/mcp.git
-cd mcp && pnpm install && pnpm build
+git clone https://github.com/onwardplatforms/infracodebase-mcp.git
+cd infracodebase-mcp && npm install && npm run build
 node dist/index.js init --token=icb_pat_xxx --api-url=https://infra.your-company.com/api/v1
 ```
 
@@ -58,9 +58,18 @@ infracodebase help                     # Full usage
 ## Development
 
 ```bash
-pnpm install
-pnpm build
-pnpm smoke   # offline test of the MCP protocol layer
+npm install
+npm run build
+npm run test:run   # unit tests (Vitest)
+npm run smoke      # offline test of the MCP protocol layer
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. MIT licensed.
+See [CONTRIBUTING.md](https://github.com/onwardplatforms/infracodebase-mcp/blob/main/CONTRIBUTING.md)
+for the full guide. MIT licensed.
+
+## Releases
+
+Versions are published to npm automatically. Each release is tagged `vX.Y.Z`
+with notes generated from the changes in that release — browse the full
+changelog on the
+[GitHub Releases page](https://github.com/onwardplatforms/infracodebase-mcp/releases).

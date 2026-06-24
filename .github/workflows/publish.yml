@@ -1,5 +1,12 @@
 name: Publish to npm
 
+# Fires when release.yml (or a manual GitHub Release) creates a v* release.
+# The release tag is the single source of truth for the published version:
+# the "Set version from release tag" step writes it into package.json before
+# publishing, so the npm version always matches the tag and GitHub Release.
+#
+# Required secret: NPM_TOKEN (npm automation token with publish access).
+
 on:
   release:
     types: [created]
@@ -13,6 +20,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # On a release event, checkout defaults to the release's tag ref.
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
@@ -24,8 +32,23 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Set version from release tag
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="${TAG#v}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tag '$TAG' is not a vX.Y.Z semantic version."
+            exit 1
+          fi
+          # Write the tag's version into package.json (no commit, no git tag).
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+
       - name: Lint
         run: npm run lint
+
+      - name: Test
+        run: npm run test:run
 
       - name: Build
         run: npm run build

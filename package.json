@@ -17,7 +17,9 @@
     "dev": "tsc --watch",
     "lint": "oxlint src",
     "format": "oxlint --fix src",
-    "smoke": "pnpm build && node scripts/smoke.mjs",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "smoke": "npm run build && node scripts/smoke.mjs",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -30,6 +32,14 @@
   ],
   "author": "infracodebase",
   "license": "MIT",
+  "homepage": "https://github.com/onwardplatforms/infracodebase-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/onwardplatforms/infracodebase-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/onwardplatforms/infracodebase-mcp/issues"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",
     "zod": "^3.24.1"
@@ -37,7 +47,8 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "oxlint": "^0.15.8",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.0"
   },
   "engines": {
     "node": ">=20.0.0"
