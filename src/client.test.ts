@@ -138,17 +138,64 @@ describe("InfracodebaseClient — query/path building", () => {
     expect(lastCall(fetchMock).url).toMatch(/\/compliance\/evaluations\/abc123$/);
   });
 
-  it("builds the findings query from ref and status, and drops it when both absent", async () => {
-    const fetchMock = stubFetch(jsonResponse({ data: [] }));
-    fetchMock.mockImplementation(async () => jsonResponse({ data: [] })); // fresh body per call
+  it("fetches findings under the ref evaluation, passing status as a query param", async () => {
+    const fetchMock = stubFetch(jsonResponse({ findings: [] }));
+    fetchMock.mockImplementation(async () => jsonResponse({ findings: [] })); // fresh body per call
     const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
 
+    // An explicit ref goes straight to that evaluation's findings — no latest lookup.
     await client.listComplianceFindings("ent_1", "ws_1", { ref: "abc", status: "fail" });
-    expect(lastCall(fetchMock).url).toContain("/compliance/findings?ref=abc&status=fail");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(lastCall(fetchMock).url).toBe(
+      "https://api.example.com/enterprises/ent_1/workspaces/ws_1/compliance/evaluations/abc/findings?status=fail"
+    );
 
+    // No status -> bare findings path (still under the ref evaluation).
     fetchMock.mockClear();
-    await client.listComplianceFindings("ent_1", "ws_1");
-    expect(lastCall(fetchMock).url).toMatch(/\/compliance\/findings$/);
+    await client.listComplianceFindings("ent_1", "ws_1", { ref: "abc" });
+    expect(lastCall(fetchMock).url).toMatch(/\/compliance\/evaluations\/abc\/findings$/);
+  });
+
+  it("hits the latest-findings alias in a single request when no ref is given", async () => {
+    const fetchMock = stubFetch(jsonResponse({ findings: [] }));
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+
+    await client.listComplianceFindings("ent_1", "ws_1", { status: "pass" });
+
+    // No client-side id resolution — the server resolves `latest`.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(lastCall(fetchMock).url).toBe(
+      "https://api.example.com/enterprises/ent_1/workspaces/ws_1/compliance/evaluations/latest/findings?status=pass"
+    );
+  });
+
+  it("surfaces the server 404 when the workspace has no evaluation", async () => {
+    const fetchMock = stubFetch(jsonResponse({ code: "evaluation_not_found" }, 404));
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+
+    await expect(client.listComplianceFindings("ent_1", "ws_1")).rejects.toMatchObject({
+      status: 404,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(lastCall(fetchMock).url).toMatch(/\/compliance\/evaluations\/latest\/findings$/);
+  });
+
+  it("PATCHes the dedicated /resources endpoint with the add/remove body", async () => {
+    const fetchMock = stubFetch(jsonResponse({ workspace_id: "ws_1" }));
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+
+    await client.updateWorkspaceResources("ent_1", "ws_1", {
+      add_ruleset_ids: ["rs_1"],
+      remove_workflow_ids: ["wf_2"],
+    });
+
+    const { url, init } = lastCall(fetchMock);
+    expect(url).toBe("https://api.example.com/enterprises/ent_1/workspaces/ws_1/resources");
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(init.body as string)).toEqual({
+      add_ruleset_ids: ["rs_1"],
+      remove_workflow_ids: ["wf_2"],
+    });
   });
 });
 

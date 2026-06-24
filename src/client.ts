@@ -118,13 +118,15 @@ export class InfracodebaseClient {
     workspaceId: string,
     params?: { ref?: string; status?: string }
   ) {
-    const searchParams = new URLSearchParams();
-    if (params?.ref) searchParams.set("ref", params.ref);
-    if (params?.status) searchParams.set("status", params.status);
-    const query = searchParams.toString();
+    // Findings are nested under an evaluation. A ref (evaluation id or commit
+    // SHA) targets that evaluation; with no ref we hit the `latest` alias,
+    // which the API resolves to the latest completed evaluation server-side —
+    // one request either way, no client-side id resolution.
+    const evalRef = params?.ref ? encodeURIComponent(params.ref) : "latest";
+    const query = params?.status ? `?status=${encodeURIComponent(params.status)}` : "";
     const path =
-      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/findings` +
-      (query ? `?${query}` : "");
+      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/evaluations/${evalRef}/findings` +
+      query;
 
     return this.request<unknown>("GET", path);
   }
@@ -211,7 +213,7 @@ export class InfracodebaseClient {
   ) {
     return this.request<unknown>(
       "PATCH",
-      `/enterprises/${enterpriseId}/workspaces/${workspaceId}`,
+      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/resources`,
       {
         body: updates,
       }
