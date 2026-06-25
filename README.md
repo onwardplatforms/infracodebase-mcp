@@ -4,7 +4,9 @@ MCP server bringing [infracodebase](https://infracodebase.com)'s compliance, rul
 
 ## Quickstart
 
-Get a token from [infracodebase.com/settings/tokens](https://infracodebase.com/settings/tokens), then add the server to your MCP client with the token in its `env` — same as the GitHub or Stripe MCP servers. For Claude Code:
+Get a token from [infracodebase.com/settings/tokens](https://infracodebase.com/settings/tokens), then add the server to your MCP client with the token in its `env`.
+
+For Claude Code:
 
 ```bash
 claude mcp add infracodebase --env INFRACODEBASE_TOKEN=icb_pat_xxx -- npx -y @infracodebase/mcp@latest
@@ -24,11 +26,9 @@ For Claude Desktop / Cursor and other clients, add to your `mcp.json`:
 }
 ```
 
-Restart your client. There's no login or setup step — the server reads the token from its environment at startup.
-
 ## Self-hosted
 
-Add `INFRACODEBASE_API_URL` to the same `env` block (or pass `--api-url`); unset, it targets the SaaS.
+Add `INFRACODEBASE_API_URL` to the same `env` block (or pass `--api-url`)
 
 ```json
 "env": {
@@ -56,7 +56,7 @@ config file: the MCP client owns the configuration and passes it in via `env`.
 
 ## CLI
 
-You rarely run this directly — your MCP client spawns it. When you do, use the
+You rarely run this directly - your MCP client spawns it. When you do, use the
 `npx` form (or `infracodebase` / `infracodebase-mcp` if installed globally):
 
 ```bash
@@ -79,6 +79,6 @@ for the full guide. MIT licensed.
 ## Releases
 
 Versions are published to npm automatically. Each release is tagged `vX.Y.Z`
-with notes generated from the changes in that release — browse the full
+with notes generated from the changes in that release - browse the full
 changelog on the
 [GitHub Releases page](https://github.com/onwardplatforms/infracodebase-mcp/releases).
