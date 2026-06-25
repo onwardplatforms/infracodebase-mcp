@@ -4,41 +4,50 @@ MCP server bringing [infracodebase](https://infracodebase.com)'s compliance, rul
 
 ## Quickstart
 
-Get a token from [infracodebase.com/settings/tokens](https://infracodebase.com/settings/tokens), then:
+Get a token from [infracodebase.com/settings/tokens](https://infracodebase.com/settings/tokens), then add the server to your MCP client with the token in its `env` — same as the GitHub or Stripe MCP servers. For Claude Code:
 
 ```bash
-INFRACODEBASE_TOKEN=your_token npx @infracodebase/mcp init
+claude mcp add infracodebase --env INFRACODEBASE_TOKEN=icb_pat_xxx -- npx -y @infracodebase/mcp@latest
 ```
 
-`init` validates the token, saves `~/.infracodebase/config.json`, and prints the command to connect your client. For Claude Code:
+For Claude Desktop / Cursor and other clients, add to your `mcp.json`:
 
-```bash
-claude mcp add infracodebase -- npx -y @infracodebase/mcp
+```json
+{
+  "mcpServers": {
+    "infracodebase": {
+      "command": "npx",
+      "args": ["-y", "@infracodebase/mcp@latest"],
+      "env": { "INFRACODEBASE_TOKEN": "icb_pat_xxx" }
+    }
+  }
+}
 ```
 
-Restart your client. Verify with `infracodebase auth status`.
+Restart your client. There's no login or setup step — the server reads the token from its environment at startup.
 
 ## Self-hosted
 
-Add `--api-url` (or set `INFRACODEBASE_API_URL`); unset, it targets the SaaS.
+Add `INFRACODEBASE_API_URL` to the same `env` block (or pass `--api-url`); unset, it targets the SaaS.
 
-```bash
-npx @infracodebase/mcp init --token=icb_pat_xxx --api-url=https://infra.your-company.com/api/v1
+```json
+"env": {
+  "INFRACODEBASE_TOKEN": "icb_pat_xxx",
+  "INFRACODEBASE_API_URL": "https://infra.your-company.com/api/v1"
+}
 ```
 
-No public npm access? Run from a clone instead - same server:
+No public npm access? Run from a clone instead - same server. Build it, then point your client at `node /abs/path/to/mcp/dist/index.js` with the same `env`:
 
 ```bash
 git clone https://github.com/onwardplatforms/infracodebase-mcp.git
 cd infracodebase-mcp && npm install && npm run build
-node dist/index.js init --token=icb_pat_xxx --api-url=https://infra.your-company.com/api/v1
 ```
-
-Then point your client at `node /abs/path/to/mcp/dist/index.js` with the same `--api-url`.
 
 ## Configuration
 
-Token and API URL resolve from flag → env var → `~/.infracodebase/config.json` → default.
+Token and API URL resolve from flag → env var → default. There is no stored
+config file: the MCP client owns the configuration and passes it in via `env`.
 
 | Flag              | Env var                 | Default                            |
 | ----------------- | ----------------------- | ---------------------------------- |
@@ -47,12 +56,12 @@ Token and API URL resolve from flag → env var → `~/.infracodebase/config.jso
 
 ## CLI
 
+You rarely run this directly — your MCP client spawns it. When you do, use the
+`npx` form (or `infracodebase` / `infracodebase-mcp` if installed globally):
+
 ```bash
-infracodebase                          # Start the server (stdio) - default
-infracodebase init                     # Validate token, save config
-infracodebase auth status | logout     # Show / remove saved config
-infracodebase config get | set <k> <v> # Read / change a setting (api-url)
-infracodebase help                     # Full usage
+npx -y @infracodebase/mcp@latest          # Start the server (stdio) - default
+npx -y @infracodebase/mcp@latest help     # Full usage
 ```
 
 ## Development

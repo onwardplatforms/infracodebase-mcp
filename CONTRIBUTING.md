@@ -28,14 +28,12 @@ npm run dev        # tsc --watch
 
 ```
 src/
-├── index.ts            CLI entry point (commands, flag parsing)
+├── index.ts            CLI entry point (default = run server, flag parsing)
 ├── server.ts           MCP server setup + stdio transport
-├── config.ts           ~/.infracodebase/config.json load/save, token resolution
+├── config.ts           token/URL resolution from flags + env (no stored file)
 ├── client.ts           REST API client (auth, ApiError)
 ├── cli/
-│   ├── usage.ts        `help` / usage text
-│   ├── config.ts       `config get` / `config set`
-│   └── auth.ts         `auth status` / `auth logout`
+│   └── usage.ts        `help` / usage text
 └── tools/
     ├── index.ts            Self-documenting TOOLS[] registry + registerAllTools
     ├── helpers.ts          ToolContext, the registerTool wrapper, shared resolution
@@ -54,24 +52,22 @@ The published install uses `npx @infracodebase/mcp`. Locally you skip npx
 and hit your built entry point instead. There are three equivalents - pick one:
 
 ```bash
-# 1. Run the built entry point directly
-INFRACODEBASE_TOKEN=your_token node dist/index.js init
+# 1. Run the built entry point directly (token from env, like a real client)
+INFRACODEBASE_TOKEN=your_token node dist/index.js
 
 # 2. dist/index.js has a shebang and is marked as a bin, so after `npm build`:
-INFRACODEBASE_TOKEN=your_token ./dist/index.js init
+INFRACODEBASE_TOKEN=your_token ./dist/index.js
 
-# 3. Put the real `infracodebase` command on your PATH (mimics a global install)
+# 3. Put the `infracodebase` command on your PATH (mimics a global install)
 npm link                                       # once
-INFRACODEBASE_TOKEN=your_token infracodebase init
+INFRACODEBASE_TOKEN=your_token infracodebase
 #   undo later with: npm unlink -g @infracodebase/mcp
 ```
 
-`init` **validates the token against the API before saving** it to
-`~/.infracodebase/config.json`. Confirm it worked:
-
-```bash
-node dist/index.js auth status      # → ✓ valid + the enterprises the token can see
-```
+The server reads the token from `INFRACODEBASE_TOKEN` (or `--token`) at startup
+and runs a non-blocking preflight against the API - on success it logs
+`Ready - connected to <url>`; a bad/expired token or unreachable host logs a
+warning but never blocks startup.
 
 ### 1. Unit tests (Vitest)
 
@@ -115,13 +111,13 @@ Point Claude Code at your **local build** (not the published package). Use a
 distinct server name like `-dev` so it doesn't collide with a hosted server:
 
 ```bash
-claude mcp add infracodebase-dev -- node /absolute/path/to/dist/index.js
+claude mcp add infracodebase-dev --env INFRACODEBASE_TOKEN=your_token -- node /absolute/path/to/dist/index.js
 # remove when done:
 claude mcp remove infracodebase-dev
 ```
 
-It reads the token from `~/.infracodebase/config.json`. Start a session in any
-repo, ask Claude to write some Terraform, and confirm it calls
+It reads the token from the `INFRACODEBASE_TOKEN` env passed above. Start a
+session in any repo, ask Claude to write some Terraform, and confirm it calls
 `get_workspace_context` first.
 
 ## Before opening a PR

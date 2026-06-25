@@ -3,8 +3,11 @@
  * Offline MCP smoke test.
  *
  * Spawns the built server, performs the initialize handshake, and asserts that
- * tools/list returns the full tool set. Touches no network and needs no token,
- * so it's safe to run anywhere (including CI). Exits non-zero on any failure.
+ * tools/list returns the full tool set. tools/list is static, so this needs no
+ * real credentials: we pass a dummy token and point the API at an unreachable
+ * URL, keeping the test offline and safe to run anywhere (including CI). The
+ * startup preflight is non-blocking and its failure is ignored. Exits non-zero
+ * on any assertion failure.
  */
 
 import { spawn } from "node:child_process";
@@ -30,7 +33,16 @@ const requests = [
   { jsonrpc: "2.0", id: 2, method: "tools/list" },
 ];
 
-const child = spawn("node", [entry], { stdio: ["pipe", "pipe", "inherit"] });
+const child = spawn("node", [entry], {
+  stdio: ["pipe", "pipe", "inherit"],
+  env: {
+    ...process.env,
+    INFRACODEBASE_TOKEN: "icb_pat_smoke_dummy",
+    // Unreachable on purpose: the non-blocking preflight fails fast without
+    // touching the real API, and tools/list doesn't need it anyway.
+    INFRACODEBASE_API_URL: "http://127.0.0.1:1",
+  },
+});
 
 let out = "";
 child.stdout.on("data", (chunk) => {

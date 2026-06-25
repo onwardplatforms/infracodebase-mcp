@@ -4,6 +4,8 @@
  * Calls the public /api/v1 endpoints with authentication.
  */
 
+import { VERSION } from "./version.js";
+
 export interface ClientConfig {
   baseUrl: string;
   token: string;
@@ -32,7 +34,7 @@ export class InfracodebaseClient {
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.token}`,
       "Content-Type": "application/json",
-      "User-Agent": "@infracodebase/mcp/1.0.0",
+      "User-Agent": `@infracodebase/mcp/${VERSION}`,
     };
 
     const response = await fetch(url, {

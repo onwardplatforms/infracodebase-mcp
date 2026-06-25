@@ -10,6 +10,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { Config } from "./config.js";
 import { InfracodebaseClient } from "./client.js";
 import { registerAllTools } from "./tools/index.js";
+import { VERSION } from "./version.js";
 
 // Same instructions as the hosted MCP server
 const SERVER_INSTRUCTIONS = `**Before writing or modifying any infrastructure-as-code in this session - Terraform, Pulumi, CloudFormation, Bicep, Kubernetes manifests, Helm, Ansible - including bootstrapping IaC in an empty repo, you MUST call \`get_workspace_context\` first.** The result tells you whether this repo is governed by infracodebase and which rulesets apply. This trigger holds for every IaC turn, not just session start.
@@ -37,7 +38,7 @@ export async function createServer(config: Config): Promise<{
   context: ServerContext;
 }> {
   const server = new McpServer(
-    { name: "infracodebase", version: "1.0.0" },
+    { name: "infracodebase", version: VERSION },
     { instructions: SERVER_INSTRUCTIONS }
   );
 
@@ -77,10 +78,10 @@ async function preflight(client: InfracodebaseClient, apiUrl: string): Promise<v
     const status = (err as { status?: number }).status;
     if (status === 401 || status === 403) {
       log(`⚠ token rejected (HTTP ${status}) - invalid or expired`);
-      log(`  Check it: infracodebase auth status`);
+      log(`  Check INFRACODEBASE_TOKEN; get a fresh token at https://infracodebase.com/settings/tokens`);
     } else {
       log(`⚠ could not reach ${apiUrl}`);
-      log(`  Wrong URL? Fix it: infracodebase config set api-url <correct-url>`);
+      log(`  Wrong endpoint? Set INFRACODEBASE_API_URL (or --api-url) to the correct URL.`);
     }
   }
 }
