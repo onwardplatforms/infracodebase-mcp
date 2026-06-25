@@ -1,0 +1,8 @@
+{
+  "rules": {
+    "typescript": "warn",
+    "unicorn": "warn",
+    "import": "warn"
+  },
+  "ignore": ["dist", "node_modules"]
+}

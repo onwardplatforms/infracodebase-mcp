@@ -1,0 +1,10 @@
+src/
+tsconfig.json
+*.test.ts
+*.spec.ts
+.DS_Store
+node_modules/
+.github/
+IMPLEMENTATION_STATUS.md
+oxlint.json
+.gitignore

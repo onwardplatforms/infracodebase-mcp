@@ -1,0 +1,359 @@
+name: Release
+
+# AI-assisted release, mirroring the main application's release process
+# (.github/workflows/app-deployment.yml in the infracodebase repo).
+#
+# Chain: test → release. On a push to main, the `release` job asks Claude to
+# classify the changes since the last v* tag as patch/minor/major, compute the
+# next semantic version, and write user-facing release notes. It then creates
+# the git tag and a GitHub Release.
+#
+# Creating the Release fires `publish.yml` (`on: release: created`), which
+# publishes that exact tag's version to npm — so the AI-decided version is the
+# single source of truth for both the GitHub Release and the npm package.
+#
+# Unlike the application (which deploys by image tag), this repo does not commit
+# the bumped version back to main: the version lives in the tag, and publish.yml
+# sets package.json from the tag at publish time. That keeps the release job off
+# the protected main branch.
+#
+# Escape hatches (workflow_dispatch):
+#   - version_override: force a specific version, bypassing the AI decision.
+#   - dry_run: generate and print the notes without tagging or releasing.
+#
+# Required secret: ANTHROPIC_API_KEY (for the version + notes generation).
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - ".github/**"
+      - "docs/**"
+  workflow_dispatch:
+    inputs:
+      version_override:
+        description: "Force a specific version (e.g., 1.2.0), bypassing the AI version decision"
+        required: false
+        type: string
+      dry_run:
+        description: "Generate release notes without tagging or releasing"
+        required: false
+        type: boolean
+        default: false
+
+# Serialize releases so two pushes can't race the same tag.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.x"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm run test:run
+
+      - name: Build
+        run: npm run build
+
+      - name: Smoke test
+        run: node scripts/smoke.mjs
+
+  release:
+    name: Version and Release
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get last release tag
+        id: last-tag
+        run: |
+          LAST_TAG=$(git describe --tags --abbrev=0 --match "v*" 2>/dev/null || echo "")
+          if [ -z "$LAST_TAG" ]; then
+            echo "No v* tag found yet — using the first commit as the base."
+            LAST_TAG=$(git rev-list --max-parents=0 HEAD)
+          fi
+          echo "tag=$LAST_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Collect commits and diff
+        id: collect
+        run: |
+          LAST_TAG="${{ steps.last-tag.outputs.tag }}"
+
+          COMMITS=$(git log "$LAST_TAG"...HEAD --oneline)
+          if [ -z "$COMMITS" ]; then
+            # No releasable commits since the last tag (e.g. a re-run). Skip
+            # cleanly rather than failing the run red.
+            echo "::notice::No commits since $LAST_TAG — nothing to release."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "$COMMITS" > /tmp/commits.txt
+
+          # Limit the diff to the sources that affect the published package.
+          git diff "$LAST_TAG"...HEAD -- \
+            src/ \
+            scripts/ \
+            package.json \
+            README.md | head -c 500000 > /tmp/diff.txt
+
+      - name: Get previous release notes
+        if: ${{ steps.collect.outputs.skip != 'true' }}
+        run: |
+          gh release view --json body -q .body 2>/dev/null > /tmp/prev-notes.txt || echo "" > /tmp/prev-notes.txt
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Determine version
+        id: version
+        if: ${{ steps.collect.outputs.skip != 'true' }}
+        env:
+          INPUT_LAST_TAG: ${{ steps.last-tag.outputs.tag }}
+          INPUT_VERSION_OVERRIDE: ${{ inputs.version_override }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          # Read large inputs from files to avoid ARG_MAX limits.
+          INPUT_COMMITS=$(cat /tmp/commits.txt)
+
+          # Manual override — skip the API call entirely.
+          if [ -n "$INPUT_VERSION_OVERRIDE" ]; then
+            VERSION="$INPUT_VERSION_OVERRIDE"
+            SUMMARY="Manual release v${VERSION}"
+            NOTES=$(printf "### Commits\n\n%s" "$INPUT_COMMITS")
+            {
+              echo "version=$VERSION"
+              echo "summary=$SUMMARY"
+              echo "notes<<EOF"
+              echo "$NOTES"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # The current version is the last v* tag. Before the first tag exists
+          # INPUT_LAST_TAG is a commit SHA, so fall back to package.json's
+          # version as the baseline — never below what's already declared.
+          CURRENT_VERSION="${INPUT_LAST_TAG#v}"
+          if [[ ! "$CURRENT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            CURRENT_VERSION=$(jq -r .version package.json)
+          fi
+
+          # Prompt template (quoted heredoc prevents shell expansion).
+          cat <<'TEMPLATE' > /tmp/prompt.txt
+          You are a release notes generator for @infracodebase/mcp, a
+          user-hosted Model Context Protocol (MCP) server published to npm. It
+          exposes infracodebase's governance and compliance capabilities as MCP
+          tools to AI coding agents (Claude Code, Cursor, etc.).
+
+          The current version is __VERSION__. Follow these steps in order:
+
+          1. Classify the release as patch, minor, or major using the rules below
+          2. Compute the next semantic version from the current version
+          3. Write concise user-facing release notes based only on evidence in
+             the diff and commits
+
+          Return a JSON object with exactly this schema:
+
+          {
+            "version": "x.y.z",
+            "summary": "One sentence describing this release",
+            "notes": "Markdown release notes (see format below)"
+          }
+
+          ## Versioning rules
+
+          Semantic versioning (major.minor.patch). The "users" of this package
+          are the AI agents and operators who install and call its MCP tools.
+
+          - Patch (e.g., 1.2.3 -> 1.2.4): bug fixes, dependency updates,
+            internal refactoring with no change to tool behavior, test additions,
+            documentation changes.
+          - Minor (e.g., 1.2.3 -> 1.3.0): a new MCP tool, a new optional input on
+            an existing tool, a new CLI command or flag, or a backward-compatible
+            enhancement to existing tool output.
+          - Major (e.g., 1.2.3 -> 2.0.0): a removed or renamed MCP tool, a removed
+            or renamed tool input, a new required input on an existing tool, a
+            changed output shape that callers depend on, a raised minimum Node
+            version, or any other change that breaks existing client integrations.
+
+          ## Evidence rules
+
+          Base the version on impact evidenced in the diff. Prefer diff evidence
+          over commit-message wording; use commit messages only as context.
+
+          - Treat changes to src/tools/ (tool registration, input schemas in
+            validation.ts, tool handlers) as the primary signal for tool-facing
+            changes.
+          - Do not assume a new tool or feature from refactoring or code movement
+            alone (e.g. splitting one file into several with no behavior change is
+            a patch).
+          - Do not assume a breaking change unless the diff clearly shows a tool,
+            input, or output being removed, renamed, or made required.
+          - If evidence is ambiguous, prefer patch over minor.
+          - Only choose major with clear evidence of a breaking change.
+
+          ## Release notes format
+
+          ### Added
+          - New tools, inputs, or commands (only if applicable)
+
+          ### Improved
+          - Enhancements to existing behavior (only if applicable)
+
+          ### Fixed
+          - Bug fix descriptions (only if applicable)
+
+          ### Breaking Changes
+          - What changed and what integrators must do (only for major releases)
+
+          Only include sections that have entries. Write from the perspective of
+          someone installing and using the MCP server. Keep each bullet to one
+          line. Do not mention file names, function names, or implementation
+          details.
+
+          ## Previous release notes (for tone reference)
+
+          __PREV_NOTES__
+
+          ## Commits
+
+          __COMMITS__
+
+          ## Diff
+
+          __DIFF__
+
+          Return ONLY the JSON object. No other text.
+          TEMPLATE
+
+          # Build the payload with jq + file inputs (avoids ARG_MAX limits).
+          jq -n \
+            --arg model "claude-sonnet-4-6" \
+            --rawfile template /tmp/prompt.txt \
+            --rawfile commits /tmp/commits.txt \
+            --rawfile diff /tmp/diff.txt \
+            --rawfile prev /tmp/prev-notes.txt \
+            --arg ver "$CURRENT_VERSION" \
+            '{
+              model: $model,
+              max_tokens: 1024,
+              messages: [
+                { role: "user", content: ($template | gsub("__VERSION__"; $ver) | gsub("__PREV_NOTES__"; $prev) | gsub("__COMMITS__"; $commits) | gsub("__DIFF__"; $diff)) }
+              ]
+            }' > /tmp/payload.json
+
+          # Call the API with retry (up to 3 attempts with backoff).
+          RESPONSE=""
+          for ATTEMPT in 1 2 3; do
+            HTTP_CODE=$(curl -s -o /tmp/api_response.json -w "%{http_code}" \
+              https://api.anthropic.com/v1/messages \
+              -H "content-type: application/json" \
+              -H "x-api-key: $ANTHROPIC_API_KEY" \
+              -H "anthropic-version: 2023-06-01" \
+              -d @/tmp/payload.json)
+
+            if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+              RESPONSE=$(cat /tmp/api_response.json)
+              break
+            fi
+
+            echo "::warning::API attempt $ATTEMPT failed with HTTP $HTTP_CODE"
+            if [ "$ATTEMPT" -lt 3 ]; then
+              sleep $((ATTEMPT * 5))
+            else
+              echo "::error::API call failed after 3 attempts (last HTTP $HTTP_CODE)"
+              cat /tmp/api_response.json >&2
+              exit 1
+            fi
+          done
+
+          # Extract the text and parse JSON (strip markdown fences if present).
+          RAW_TEXT=$(echo "$RESPONSE" | jq -r '.content[0].text')
+          JSON=$(echo "$RAW_TEXT" | sed -n '/^{/,/^}/p')
+
+          if ! echo "$JSON" | jq empty 2>/dev/null; then
+            echo "::error::API returned invalid JSON"
+            echo "$RAW_TEXT" >&2
+            exit 1
+          fi
+
+          VERSION=$(echo "$JSON" | jq -r '.version')
+          SUMMARY=$(echo "$JSON" | jq -r '.summary')
+          NOTES=$(echo "$JSON" | jq -r '.notes')
+
+          # Validate semver.
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version from API: $VERSION"
+            exit 1
+          fi
+
+          # Validate the version is newer than the current one.
+          if [[ "$CURRENT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            if [[ "$(printf '%s\n' "$CURRENT_VERSION" "$VERSION" | sort -V | tail -1)" == "$CURRENT_VERSION" && "$VERSION" != "$CURRENT_VERSION" ]]; then
+              echo "::error::Returned version $VERSION is not newer than current $CURRENT_VERSION"
+              exit 1
+            fi
+          fi
+
+          {
+            echo "version=$VERSION"
+            echo "summary=$SUMMARY"
+            echo "notes<<EOF"
+            echo "$NOTES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          # Surface results for dry-run visibility.
+          echo "::notice::Version: $VERSION"
+          echo "::notice::Summary: $SUMMARY"
+          echo "------- Release Notes -------"
+          echo "$NOTES"
+          echo "-----------------------------"
+
+      - name: Create tag and release
+        if: ${{ inputs.dry_run != true && steps.collect.outputs.skip != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_NOTES: ${{ steps.version.outputs.notes }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+
+          # Guard against re-releasing an existing version.
+          if git rev-parse "v${VERSION}" >/dev/null 2>&1; then
+            echo "::error::Tag v${VERSION} already exists. Nothing to release."
+            exit 1
+          fi
+
+          git tag "v${VERSION}"
+          git push origin "v${VERSION}"
+
+          printf '%s' "$RELEASE_NOTES" > /tmp/release-notes.md
+
+          # Creating the release fires publish.yml, which publishes v${VERSION}
+          # to npm.
+          gh release create "v${VERSION}" \
+            --title "v${VERSION}" \
+            --notes-file /tmp/release-notes.md

@@ -1,0 +1,56 @@
+{
+  "name": "@infracodebase/mcp",
+  "version": "1.0.0",
+  "description": "User-hosted MCP server that brings infracodebase's compliance, rulesets, and governance to your local agent.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "infracodebase": "./dist/index.js",
+    "infracodebase-mcp": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "oxlint src",
+    "format": "oxlint --fix src",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "smoke": "npm run build && node scripts/smoke.mjs",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "infracodebase",
+    "infrastructure-as-code",
+    "compliance",
+    "governance"
+  ],
+  "author": "infracodebase",
+  "license": "MIT",
+  "homepage": "https://github.com/onwardplatforms/infracodebase-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/onwardplatforms/infracodebase-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/onwardplatforms/infracodebase-mcp/issues"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "oxlint": "^0.15.8",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
