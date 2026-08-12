@@ -82,10 +82,11 @@ export class InfracodebaseClient {
     return (res.data as Array<{ id?: string; name?: string }>) ?? [];
   }
 
-  async listWorkspaces(enterpriseId: string) {
+  async listWorkspaces(enterpriseId: string, kinds?: string[]) {
+    const query = kinds?.length ? `?kinds=${encodeURIComponent(kinds.join(","))}` : "";
     return this.request<{ data: Array<unknown> }>(
       "GET",
-      `/enterprises/${enterpriseId}/workspaces`
+      `/enterprises/${enterpriseId}/workspaces${query}`
     );
   }
 
@@ -107,12 +108,48 @@ export class InfracodebaseClient {
   // Compliance operations
   // ---------------------------------------------------------------------------
 
-  async getComplianceEvaluation(enterpriseId: string, workspaceId: string, ref?: string) {
+  /**
+   * `branch` only applies when `ref` is omitted — it scopes "latest" to a
+   * branch (server falls back to the workspace's default branch, then to
+   * the most recent completed evaluation on any branch).
+   */
+  async getComplianceEvaluation(
+    enterpriseId: string,
+    workspaceId: string,
+    ref?: string,
+    branch?: string
+  ) {
     const path = ref
       ? `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/evaluations/${ref}`
-      : `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/evaluations/latest`;
+      : `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/evaluations/latest` +
+        (branch ? `?branch=${encodeURIComponent(branch)}` : "");
 
     return this.request<unknown>("GET", path);
+  }
+
+  /**
+   * Trigger a compliance evaluation. With no scoping params, runs a full
+   * evaluation. Pass `ruleset_id`, `rule_id`, or `rule_ids` to scope the run
+   * to just those rules — other rules' findings carry forward from the
+   * rollforward baseline unchanged. Fire-and-forget on the server: returns
+   * the queued/running evaluation summary immediately: poll it with
+   * getComplianceEvaluation.
+   */
+  async triggerComplianceEvaluation(
+    enterpriseId: string,
+    workspaceId: string,
+    body: {
+      ref?: string;
+      ruleset_id?: string;
+      rule_id?: string;
+      rule_ids?: string[];
+    }
+  ) {
+    return this.request<unknown>(
+      "POST",
+      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/evaluations`,
+      { body }
+    );
   }
 
   async listComplianceFindings(

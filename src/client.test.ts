@@ -138,6 +138,61 @@ describe("InfracodebaseClient — query/path building", () => {
     expect(lastCall(fetchMock).url).toMatch(/\/compliance\/evaluations\/abc123$/);
   });
 
+  it("adds a branch query param to /latest, but only when no ref is given", async () => {
+    const fetchMock = stubFetch(jsonResponse({}));
+    fetchMock.mockImplementation(async () => jsonResponse({}));
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+
+    await client.getComplianceEvaluation("ent_1", "ws_1", undefined, "feature/x");
+    expect(lastCall(fetchMock).url).toBe(
+      "https://api.example.com/enterprises/ent_1/workspaces/ws_1/compliance/evaluations/latest?branch=feature%2Fx"
+    );
+
+    fetchMock.mockClear();
+    await client.getComplianceEvaluation("ent_1", "ws_1", "abc123", "feature/x");
+    expect(lastCall(fetchMock).url).toMatch(/\/compliance\/evaluations\/abc123$/);
+  });
+
+  it("POSTs the trigger body to the evaluations endpoint", async () => {
+    const fetchMock = stubFetch(jsonResponse({ id: "eval_1", status: "running" }));
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+
+    await client.triggerComplianceEvaluation("ent_1", "ws_1", {
+      ruleset_id: "rs_1",
+      rule_ids: ["rule_1", "rule_2"],
+    });
+
+    const { url, init } = lastCall(fetchMock);
+    expect(url).toBe(
+      "https://api.example.com/enterprises/ent_1/workspaces/ws_1/compliance/evaluations"
+    );
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({
+      ruleset_id: "rs_1",
+      rule_ids: ["rule_1", "rule_2"],
+    });
+  });
+
+  it("requests specific workspace kinds via a comma-separated query param", async () => {
+    const fetchMock = stubFetch(jsonResponse({ data: [] }));
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+
+    await client.listWorkspaces("ent_1", ["STANDARD", "TEMPLATE", "MODULE"]);
+
+    expect(lastCall(fetchMock).url).toBe(
+      "https://api.example.com/enterprises/ent_1/workspaces?kinds=STANDARD%2CTEMPLATE%2CMODULE"
+    );
+  });
+
+  it("omits the kinds query param when none are given", async () => {
+    const fetchMock = stubFetch(jsonResponse({ data: [] }));
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+
+    await client.listWorkspaces("ent_1");
+
+    expect(lastCall(fetchMock).url).toBe("https://api.example.com/enterprises/ent_1/workspaces");
+  });
+
   it("fetches findings under the ref evaluation, passing status as a query param", async () => {
     const fetchMock = stubFetch(jsonResponse({ findings: [] }));
     fetchMock.mockImplementation(async () => jsonResponse({ findings: [] })); // fresh body per call

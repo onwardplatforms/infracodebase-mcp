@@ -78,6 +78,38 @@ export const TOOL_SHAPES = {
       .min(1)
       .describe("Evaluation id or commit SHA. Omit for the latest evaluation.")
       .optional(),
+    branch: z
+      .string()
+      .min(1)
+      .describe(
+        "Scope 'latest' to this branch (ignored if ref is given). Falls back to the " +
+          "workspace's default branch, then to the most recent completed evaluation on any branch."
+      )
+      .optional(),
+    ...enterpriseHint,
+  },
+
+  trigger_compliance_evaluation: {
+    workspace_id: z.string().min(1).describe("Workspace ID."),
+    ref: z
+      .string()
+      .min(1)
+      .describe("Optional commit SHA or branch to evaluate. Defaults to the current HEAD.")
+      .optional(),
+    ruleset_id: z
+      .string()
+      .min(1)
+      .describe("Scope the run to a single ruleset. Omit for a full evaluation.")
+      .optional(),
+    rule_id: z
+      .string()
+      .min(1)
+      .describe("Scope the run to a single rule. Mutually exclusive with rule_ids.")
+      .optional(),
+    rule_ids: idList(
+      "Scope the run to a batch of specific rules, e.g. the rules just fixed. " +
+        "Mutually exclusive with rule_id."
+    ),
     ...enterpriseHint,
   },
 
@@ -166,7 +198,9 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   get_ruleset_details:
     "Load the full text of every rule in a single ruleset. Returns rule id, title, full content, required flag, and order.",
   get_compliance_evaluation:
-    "Return the summary of a compliance evaluation for this workspace. With no ref, returns the latest evaluation.",
+    "Return the summary of a compliance evaluation for this workspace. With no ref, returns the latest evaluation, scoped to branch if given.",
+  trigger_compliance_evaluation:
+    "Trigger a compliance evaluation. Pass ruleset_id, rule_id, or rule_ids to scope the run to just those rules instead of a full evaluation — use this after fixing specific findings so only the affected rules re-run. Returns immediately with the queued/running evaluation; poll get_compliance_evaluation for completion.",
   list_compliance_findings:
     "Return the per-rule findings from a compliance evaluation. With no ref, uses the workspace's latest completed evaluation.",
   get_compliance_eval_spec:

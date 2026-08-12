@@ -75,14 +75,17 @@ export function createToolContext(context: ServerContext): ToolContext {
    * List every workspace across every accessible enterprise, tagged with its
    * enterprise_id. Enterprises are scanned concurrently and each list call is
    * cache-backed. Also warms the workspace→enterprise map as a side effect.
+   *
+   * Requests every workspace kind (not just the API's STANDARD-only default)
+   * so a TEMPLATE/MODULE workspace with a linked repo is still discoverable
+   * by resolveWorkspaceByRepo below.
    */
   async function listAllWorkspaces(): Promise<WorkspaceEntry[]> {
     const enterprises = (await client.listEnterprises()).data as Array<{ id: string }>;
     const perEnterprise = await Promise.all(
       enterprises.map(async (e) => {
-        const workspaces = (await client.listWorkspaces(e.id)).data as Array<
-          Omit<WorkspaceEntry, "enterprise_id">
-        >;
+        const workspaces = (await client.listWorkspaces(e.id, ["STANDARD", "TEMPLATE", "MODULE"]))
+          .data as Array<Omit<WorkspaceEntry, "enterprise_id">>;
         return workspaces.map((w) => ({ ...w, enterprise_id: e.id }));
       })
     );

@@ -30,6 +30,22 @@ describe("createToolContext — listAllWorkspaces", () => {
     expect(ctx.workspaceEnterpriseMap.get("ws_1")).toBe("ent_1");
     expect(ctx.workspaceEnterpriseMap.get("ws_2")).toBe("ent_2");
   });
+
+  it("requests every workspace kind, not just the API's STANDARD-only default", async () => {
+    // A TEMPLATE/MODULE workspace with a linked repo must still be
+    // discoverable here — otherwise resolveWorkspaceByRepo (and thus
+    // get_workspace_context's repo_url lookup) falsely reports it unlinked.
+    const listWorkspaces = vi.fn().mockResolvedValue({ data: [] });
+    const ctx = serverContext({
+      listEnterprises: vi.fn().mockResolvedValue({ data: [{ id: "ent_1" }] }),
+      listWorkspaces,
+    });
+    const tools = createToolContext(ctx);
+
+    await tools.listAllWorkspaces();
+
+    expect(listWorkspaces).toHaveBeenCalledWith("ent_1", ["STANDARD", "TEMPLATE", "MODULE"]);
+  });
 });
 
 describe("createToolContext — getEnterpriseForWorkspace", () => {
