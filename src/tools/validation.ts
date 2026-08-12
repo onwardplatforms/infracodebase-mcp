@@ -83,7 +83,9 @@ export const TOOL_SHAPES = {
       .min(1)
       .describe(
         "Scope 'latest' to this branch (ignored if ref is given). Falls back to the " +
-          "workspace's default branch, then to the most recent completed evaluation on any branch."
+          "workspace's default branch, then to the most recent completed evaluation on any branch. " +
+          "Reflects the last evaluation of a PUSHED commit on this branch — it will not show local, " +
+          "uncommitted, or unpushed changes."
       )
       .optional(),
     ...enterpriseHint,
@@ -200,7 +202,7 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   get_compliance_evaluation:
     "Return the summary of a compliance evaluation for this workspace. With no ref, returns the latest evaluation, scoped to branch if given.",
   trigger_compliance_evaluation:
-    "Trigger a compliance evaluation. Run at most one full evaluation per task — after that, always scope with ruleset_id, rule_id, or rule_ids to re-check just the rules you fixed, not the whole workspace. Returns immediately with the queued/running evaluation; poll get_compliance_evaluation for completion.",
+    "Trigger a compliance evaluation. IMPORTANT: this evaluates the code already pushed to the linked GitHub branch, not your local working tree — the platform has no visibility into uncommitted or unpushed local changes. Commit and push everything to the remote branch you're evaluating BEFORE calling this tool, or the run will silently score stale, previously-pushed code instead of what you just wrote. Run at most one full evaluation per task — after that, always scope with ruleset_id, rule_id, or rule_ids to re-check just the rules you fixed, not the whole workspace. Returns immediately with the queued/running evaluation; poll get_compliance_evaluation for completion.",
   list_compliance_findings:
     "Return the per-rule findings from a compliance evaluation. With no ref, uses the workspace's latest completed evaluation.",
   get_compliance_eval_spec:
