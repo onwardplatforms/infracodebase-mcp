@@ -50,4 +50,23 @@ describe("trigger_compliance_evaluation", () => {
 
     expect(getEnterpriseForWorkspace).toHaveBeenCalledWith("ws_1", "ent_9");
   });
+
+  it("returns the client's response verbatim, including the results-page url", async () => {
+    const client = mockClient({
+      triggerComplianceEvaluation: vi.fn().mockResolvedValue({
+        id: "eval_1",
+        status: "running",
+        url: "https://app.infracodebase.com/acme/my-workspace/compliance/eval_1",
+      }),
+    });
+    const ctx = mockContext({ client, getEnterpriseForWorkspace: vi.fn().mockResolvedValue("ent_1") });
+
+    const result = await triggerComplianceEvaluation.run(ctx, { workspace_id: "ws_1" });
+
+    expect(result).toEqual({
+      id: "eval_1",
+      status: "running",
+      url: "https://app.infracodebase.com/acme/my-workspace/compliance/eval_1",
+    });
+  });
 });

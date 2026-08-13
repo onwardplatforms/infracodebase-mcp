@@ -46,4 +46,21 @@ describe("get_compliance_evaluation", () => {
       undefined
     );
   });
+
+  it("returns the client's response verbatim, including the results-page url", async () => {
+    const client = mockClient({
+      getComplianceEvaluation: vi.fn().mockResolvedValue({
+        score: 90,
+        url: "https://app.infracodebase.com/acme/my-workspace/compliance/eval_1",
+      }),
+    });
+    const ctx = mockContext({ client, getEnterpriseForWorkspace: vi.fn().mockResolvedValue("ent_1") });
+
+    const result = await getComplianceEvaluation.run(ctx, { workspace_id: "ws_1" });
+
+    expect(result).toEqual({
+      score: 90,
+      url: "https://app.infracodebase.com/acme/my-workspace/compliance/eval_1",
+    });
+  });
 });
