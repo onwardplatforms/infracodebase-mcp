@@ -1,6 +1,6 @@
 import type { ToolDef } from "./helpers.js";
 
-/** List every ruleset relevant to a workspace, including ones not yet attached. */
+/** See TOOL_DESCRIPTIONS.list_workspace_rulesets in validation.ts for the agent-facing description. */
 export const listWorkspaceRulesets: ToolDef = {
   name: "list_workspace_rulesets",
   async run(ctx, a) {

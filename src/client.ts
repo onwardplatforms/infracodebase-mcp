@@ -156,8 +156,8 @@ export class InfracodebaseClient {
    * evaluation. Pass `ruleset_id`, `rule_id`, or `rule_ids` to scope the run
    * to just those rules — other rules' findings carry forward from the
    * rollforward baseline unchanged. Fire-and-forget on the server: returns
-   * the queued/running evaluation summary immediately: poll it with
-   * getComplianceEvaluation.
+   * the queued/running evaluation summary immediately. Check status later via
+   * getComplianceEvaluation — don't tight-loop it.
    */
   async triggerComplianceEvaluation(
     enterpriseId: string,

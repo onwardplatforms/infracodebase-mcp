@@ -37,7 +37,7 @@ src/
 └── tools/
     ├── index.ts            Self-documenting TOOLS[] registry + registerAllTools
     ├── helpers.ts          ToolContext, the registerTool wrapper, shared resolution
-    ├── validation.ts       Zod arg schemas, descriptions, repo-URL parsing
+    ├── validation.ts       Zod arg schemas, descriptions (single source of truth per tool)
     └── <tool_name>.ts       One file per MCP tool (e.g. get_workspace_context.ts)
 ```
 

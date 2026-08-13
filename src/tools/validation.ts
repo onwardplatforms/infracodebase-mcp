@@ -111,7 +111,11 @@ export const TOOL_SHAPES = {
     ref: z
       .string()
       .min(1)
-      .describe("Optional commit SHA or branch to evaluate. Defaults to the current HEAD.")
+      .describe(
+        "Optional commit SHA or branch to evaluate — must already be pushed to GitHub. " +
+          "Defaults to the latest pushed commit on the workspace's linked branch, not your " +
+          "local working tree."
+      )
       .optional(),
     ruleset_id: z
       .string()
@@ -211,7 +215,7 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   list_workspaces:
     "List workspaces you have access to in an enterprise. Each workspace includes its linked repo if any. Use this to find workspace IDs. Defaults to STANDARD-kind workspaces only — pass kinds to include template and/or module workspaces too.",
   get_workspace_context:
-    "Get full workspace context. Returns workspace identity, applicable rulesets, coding guidelines, latest compliance state, and approved module catalog summary. Pass repo_url (from the repo's git remote) or workspace_id. If a repo_url matches no workspace, returns { status: 'unlinked' }.",
+    "Get full workspace context. Returns workspace identity, applicable rulesets, coding guidelines, latest compliance state, and approved module catalog summary. Pass repo_url (from the repo's git remote) or workspace_id. Response `status` is one of: linked (context returned as above), unlinked (no workspace matches this repo — offer to create one or link an existing one), no_access (a workspace exists but you don't have permission to see it — don't imply it doesn't exist), or ambiguous (the repo matches workspaces in more than one enterprise — call again with an explicit workspace_id). Every non-linked status includes a message field with what to tell the user or do next.",
   get_ruleset_details:
     "Load the full text of every rule in a single ruleset. Returns rule id, title, full content, required flag, enabled flag, and order. Includes disabled rules (enabled: false) so you can see the whole catalog, not just what's currently active — filter on `enabled` if you only want the rules actually being evaluated.",
   list_workspace_rulesets:

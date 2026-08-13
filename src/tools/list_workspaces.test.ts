@@ -27,4 +27,19 @@ describe("list_workspaces", () => {
       "MODULE",
     ]);
   });
+
+  it("returns the client's response verbatim", async () => {
+    const response = {
+      data: [
+        { id: "ws_1", name: "Infra", kind: "STANDARD" },
+        { id: "ws_2", name: "Terraform Template", kind: "TEMPLATE" },
+      ],
+    };
+    const client = mockClient({ listWorkspaces: vi.fn().mockResolvedValue(response) });
+    const ctx = mockContext({ client });
+
+    const result = await listWorkspaces.run(ctx, { enterprise_id: "ent_1" });
+
+    expect(result).toEqual(response);
+  });
 });
