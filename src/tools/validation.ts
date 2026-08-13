@@ -62,7 +62,6 @@ export const TOOL_SHAPES = {
       .enum(IAC_TOOLS)
       .describe("Optional IaC tool to include tool-specific coding guidelines for.")
       .optional(),
-    ...enterpriseHint,
   },
 
   get_ruleset_details: {
@@ -221,26 +220,3 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   update_workspace_resources:
     "Add or remove rulesets, MCP servers, or workflows on a workspace. Required resources cannot be removed.",
 };
-
-export interface RepoRef {
-  owner: string;
-  name: string;
-}
-
-/**
- * Parse a git remote URL into a lowercased { owner, name }.
- * Handles https, ssh (git@host:owner/name), and bare "owner/name" forms,
- * with or without a trailing ".git". Returns null if it can't be parsed.
- */
-export function parseRepoUrl(url: string): RepoRef | null {
-  const cleaned = url
-    .trim()
-    .replace(/\.git$/i, "")
-    .replace(/\/+$/, "");
-  const parts = cleaned.split(/[/:]/).filter(Boolean);
-  if (parts.length < 2) return null;
-  const name = parts[parts.length - 1];
-  const owner = parts[parts.length - 2];
-  if (!owner || !name) return null;
-  return { owner: owner.toLowerCase(), name: name.toLowerCase() };
-}

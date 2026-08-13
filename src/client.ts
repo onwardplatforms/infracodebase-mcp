@@ -56,16 +56,24 @@ export class InfracodebaseClient {
   // ---------------------------------------------------------------------------
 
   /**
-   * Fetch full workspace context (identity, rulesets, guidelines, compliance,
-   * modules) for a known enterprise + workspace. Goes through the shared
-   * request() path so it gets ApiError handling like every other call.
+   * Resolve full workspace context (identity, rulesets, guidelines,
+   * compliance, modules) from a repo_url or workspace_id — exactly one is
+   * required. Server-side resolution: no enterprise ID needed upfront, no
+   * client-side enumerate-and-match. Response `status` is one of `linked`,
+   * `unlinked`, `no_access`, or `ambiguous`.
    */
-  async getWorkspaceContext(enterpriseId: string, workspaceId: string, iacTool?: string) {
-    const path =
-      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/context` +
-      (iacTool ? `?iac_tool=${encodeURIComponent(iacTool)}` : "");
+  async resolveWorkspaceContext(params: {
+    repoUrl?: string;
+    workspaceId?: string;
+    iacTool?: string;
+  }) {
+    const query = new URLSearchParams();
+    if (params.repoUrl) query.set("repo_url", params.repoUrl);
+    if (params.workspaceId) query.set("workspace_id", params.workspaceId);
+    if (params.iacTool) query.set("iac_tool", params.iacTool);
+    const qs = query.toString();
 
-    return this.request<unknown>("GET", path);
+    return this.request<unknown>("GET", `/workspace-context${qs ? `?${qs}` : ""}`);
   }
 
   async listEnterprises() {

@@ -17,7 +17,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { InfracodebaseClient } from "../client.js";
 import type { ServerContext } from "../server.js";
-import { TOOL_SHAPES, TOOL_DESCRIPTIONS, parseRepoUrl, type ToolName } from "./validation.js";
+import { TOOL_SHAPES, TOOL_DESCRIPTIONS, type ToolName } from "./validation.js";
 
 export type Args = Record<string, any>;
 
@@ -39,8 +39,6 @@ export interface ToolContext {
   listAllWorkspaces(): Promise<WorkspaceEntry[]>;
   /** Resolve the enterprise that owns a workspace, preferring a hint then the cache. */
   getEnterpriseForWorkspace(workspaceId: string, hint?: string): Promise<string>;
-  /** Find the workspace linked to a git repo URL, or null if none matches. */
-  resolveWorkspaceByRepo(repoUrl: string): Promise<WorkspaceEntry | null>;
 }
 
 /**
@@ -77,8 +75,8 @@ export function createToolContext(context: ServerContext): ToolContext {
    * cache-backed. Also warms the workspace→enterprise map as a side effect.
    *
    * Requests every workspace kind (not just the API's STANDARD-only default)
-   * so a TEMPLATE/MODULE workspace with a linked repo is still discoverable
-   * by resolveWorkspaceByRepo below.
+   * so a TEMPLATE/MODULE workspace is still discoverable when a tool needs to
+   * resolve a bare workspace_id to its enterprise without a hint.
    */
   async function listAllWorkspaces(): Promise<WorkspaceEntry[]> {
     const enterprises = (await client.listEnterprises()).data as Array<{ id: string }>;
@@ -113,27 +111,7 @@ export function createToolContext(context: ServerContext): ToolContext {
     );
   }
 
-  /** Find the workspace linked to a git repo URL, or null if none matches. */
-  async function resolveWorkspaceByRepo(repoUrl: string): Promise<WorkspaceEntry | null> {
-    const target = parseRepoUrl(repoUrl);
-    if (!target) {
-      throw new Error(
-        `Could not parse repo URL "${repoUrl}". Expected forms like ` +
-          `https://github.com/owner/name, git@github.com:owner/name, or owner/name.`
-      );
-    }
-    const all = await listAllWorkspaces();
-    return (
-      all.find(
-        (w) =>
-          w.repo &&
-          w.repo.owner?.toLowerCase() === target.owner &&
-          w.repo.name?.toLowerCase() === target.name
-      ) ?? null
-    );
-  }
-
-  return { client, listAllWorkspaces, getEnterpriseForWorkspace, resolveWorkspaceByRepo };
+  return { client, listAllWorkspaces, getEnterpriseForWorkspace };
 }
 
 /**

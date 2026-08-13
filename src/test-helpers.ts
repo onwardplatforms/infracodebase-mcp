@@ -33,7 +33,6 @@ export function mockContext(overrides: Partial<ToolContext> = {}): ToolContext {
     client: mockClient(),
     listAllWorkspaces: vi.fn(async () => [] as WorkspaceEntry[]),
     getEnterpriseForWorkspace: vi.fn(async () => "ent_default"),
-    resolveWorkspaceByRepo: vi.fn(async () => null),
     ...overrides,
   };
 }
