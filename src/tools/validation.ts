@@ -26,6 +26,8 @@ const COMPLIANCE_STATUSES = [
   "not_code_verifiable",
 ] as const;
 
+const WORKSPACE_KINDS = ["STANDARD", "TEMPLATE", "MODULE"] as const;
+
 const idList = (desc: string) => z.array(z.string().min(1)).describe(desc).optional();
 
 // Optional enterprise_id hint, shared by every workspace-scoped tool to skip the
@@ -43,6 +45,15 @@ export const TOOL_SHAPES = {
 
   list_workspaces: {
     enterprise_id: z.string().min(1).describe("Enterprise ID from list_enterprises."),
+    kinds: z
+      .array(z.enum(WORKSPACE_KINDS))
+      .describe(
+        "Workspace kinds to include. Defaults to STANDARD only if omitted — template and " +
+          "module workspaces are excluded unless explicitly requested here. Pass all three " +
+          "to see the full set, e.g. when reconciling against an enterprise's workspace_count " +
+          "(which counts STANDARD workspaces only, same default as this tool)."
+      )
+      .optional(),
   },
 
   get_workspace_context: {
@@ -191,9 +202,9 @@ export type ToolName = keyof typeof TOOL_SHAPES;
 
 export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   list_enterprises:
-    "List enterprises the caller belongs to. Use this to find an enterprise_id for list_workspaces.",
+    "List enterprises the caller belongs to. Use this to find an enterprise_id for list_workspaces. Each row's workspace_count only counts STANDARD-kind workspaces — pass kinds: ['STANDARD','TEMPLATE','MODULE'] on list_workspaces if that number doesn't match what you see there.",
   list_workspaces:
-    "List workspaces you have access to in an enterprise. Each workspace includes its linked repo if any. Use this to find workspace IDs.",
+    "List workspaces you have access to in an enterprise. Each workspace includes its linked repo if any. Use this to find workspace IDs. Defaults to STANDARD-kind workspaces only — pass kinds to include template and/or module workspaces too.",
   get_workspace_context:
     "Get full workspace context. Returns workspace identity, applicable rulesets, coding guidelines, latest compliance state, and approved module catalog summary. Pass repo_url (from the repo's git remote) or workspace_id. If a repo_url matches no workspace, returns { status: 'unlinked' }.",
   get_ruleset_details:
