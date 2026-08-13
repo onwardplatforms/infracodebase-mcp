@@ -81,6 +81,11 @@ export const TOOL_SHAPES = {
     ...enterpriseHint,
   },
 
+  list_workspace_rulesets: {
+    workspace_id: z.string().min(1).describe("Workspace ID."),
+    ...enterpriseHint,
+  },
+
   get_compliance_evaluation: {
     workspace_id: z.string().min(1).describe("Workspace ID."),
     ref: z
@@ -209,6 +214,8 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
     "Get full workspace context. Returns workspace identity, applicable rulesets, coding guidelines, latest compliance state, and approved module catalog summary. Pass repo_url (from the repo's git remote) or workspace_id. If a repo_url matches no workspace, returns { status: 'unlinked' }.",
   get_ruleset_details:
     "Load the full text of every rule in a single ruleset. Returns rule id, title, full content, required flag, enabled flag, and order. Includes disabled rules (enabled: false) so you can see the whole catalog, not just what's currently active — filter on `enabled` if you only want the rules actually being evaluated.",
+  list_workspace_rulesets:
+    "List every ruleset relevant to a workspace — including enterprise rulesets that exist in the catalog but this workspace hasn't opted into. Each row has `effective_enabled` (is it actually active here) and `workspace_setting` (the workspace's stored opinion, null if it's never opted in/out). Use this when you notice code introducing a resource type or concern that isn't covered by any currently-active ruleset, to check whether a relevant one already exists but just isn't attached — then offer to attach it via update_workspace_resources rather than assuming none exists. Only enterprise rulesets that are enabled and not required can be attached this way; required ones are already active regardless.",
   get_compliance_evaluation:
     "Return the summary of a compliance evaluation for this workspace. With no ref, returns the latest evaluation, scoped to branch if given. The response includes a `url` to the evaluation's results page — share it with the user rather than just reporting the score inline.",
   trigger_compliance_evaluation:
@@ -229,5 +236,5 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   link_workspace_to_repo:
     "Link a workspace to a GitHub repo for compliance evaluations on push.",
   update_workspace_resources:
-    "Add or remove rulesets, MCP servers, or workflows on a workspace. Required resources cannot be removed.",
+    "Add or remove rulesets, MCP servers, or workflows on a workspace. Required resources cannot be removed. Attaching a ruleset requires the caller's workspace.rulesets.manage permission — a caller without it gets a clean permission error, so it's safe to attempt. When you're the one suggesting a ruleset be attached (e.g. via list_workspace_rulesets), offer it to the user and let them confirm before calling this — don't attach it unprompted.",
 };

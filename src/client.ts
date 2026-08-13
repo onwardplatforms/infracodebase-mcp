@@ -112,6 +112,22 @@ export class InfracodebaseClient {
     return this.request<unknown>("GET", `/enterprises/${enterpriseId}/rulesets/${rulesetId}`);
   }
 
+  /**
+   * List every ruleset relevant to a workspace — enterprise rulesets
+   * (required and optional, including optional ones the workspace hasn't
+   * opted into), workspace-owned, and the caller's personal rulesets. Each
+   * row carries `workspace_setting` (the workspace's stored opinion, or
+   * null if it's never opted in/out) and `effective_enabled` (the computed
+   * active state). Use this to find a ruleset that exists in the enterprise
+   * catalog but isn't currently active for this workspace.
+   */
+  async listWorkspaceRulesets(enterpriseId: string, workspaceId: string) {
+    return this.request<{ data: Array<unknown> }>(
+      "GET",
+      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/rulesets`
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // Compliance operations
   // ---------------------------------------------------------------------------
