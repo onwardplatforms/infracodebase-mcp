@@ -35,6 +35,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Smoke test
+        run: node scripts/smoke.mjs
+
   package-test:
     runs-on: ubuntu-latest
     steps:
