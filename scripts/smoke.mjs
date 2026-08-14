@@ -11,12 +11,19 @@
  */
 
 import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 
-const EXPECTED_TOOL_COUNT = 14;
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const entry = join(root, "dist", "index.js");
+
+// The registered TOOLS array is the actual source of truth for what the
+// server exposes. Reading the expected names from the same built output
+// tools/list responds from means this check updates itself whenever a tool
+// is added or removed, instead of a hand-maintained count going stale (as
+// happened here: two tools were added and this count was never bumped).
+const { TOOLS } = await import(pathToFileURL(join(root, "dist", "tools", "index.js")));
+const expectedNames = new Set(TOOLS.map((t) => t.name));
 
 const requests = [
   {
@@ -83,9 +90,11 @@ child.on("close", () => {
     failures.push("tools/list did not return a tools array");
   } else {
     console.log(`✓ tools/list → ${tools.length} tools`);
-    if (tools.length !== EXPECTED_TOOL_COUNT) {
-      failures.push(`expected ${EXPECTED_TOOL_COUNT} tools, got ${tools.length}`);
-    }
+    const actualNames = new Set(tools.map((t) => t.name));
+    const missing = [...expectedNames].filter((n) => !actualNames.has(n));
+    const extra = [...actualNames].filter((n) => !expectedNames.has(n));
+    if (missing.length) failures.push(`missing from tools/list: ${missing.join(", ")}`);
+    if (extra.length) failures.push(`tools/list returned unexpected tools: ${extra.join(", ")}`);
   }
 
   if (failures.length) {

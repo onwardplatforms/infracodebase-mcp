@@ -89,8 +89,9 @@ npm run smoke
 ```
 
 This builds, performs the `initialize` handshake, and asserts `tools/list`
-returns all 14 tools. It exits non-zero on failure, so it's safe to wire into
-CI. (See `scripts/smoke.mjs`.)
+returns every tool in the `TOOLS` registry (`src/tools/index.ts`), so it stays
+correct as tools are added or removed. It exits non-zero on failure and runs
+in CI on every PR. (See `scripts/smoke.mjs`.)
 
 ### 3. Drive the tools interactively - MCP Inspector
 
