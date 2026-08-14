@@ -18,7 +18,9 @@ import { listEnterprises } from "./list_enterprises.js";
 import { listWorkspaces } from "./list_workspaces.js";
 import { getWorkspaceContext } from "./get_workspace_context.js";
 import { getRulesetDetails } from "./get_ruleset_details.js";
+import { listWorkspaceRulesets } from "./list_workspace_rulesets.js";
 import { getComplianceEvaluation } from "./get_compliance_evaluation.js";
+import { triggerComplianceEvaluation } from "./trigger_compliance_evaluation.js";
 import { listComplianceFindings } from "./list_compliance_findings.js";
 import { getComplianceEvalSpec } from "./get_compliance_eval_spec.js";
 import { listEnterpriseResources } from "./list_enterprise_resources.js";
@@ -37,8 +39,10 @@ export const TOOLS: ToolDef[] = [
   getWorkspaceContext,
   // Rulesets
   getRulesetDetails,
+  listWorkspaceRulesets,
   // Compliance
   getComplianceEvaluation,
+  triggerComplianceEvaluation,
   listComplianceFindings,
   getComplianceEvalSpec,
   // Enterprise resources

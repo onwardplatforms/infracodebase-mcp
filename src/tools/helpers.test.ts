@@ -30,6 +30,22 @@ describe("createToolContext — listAllWorkspaces", () => {
     expect(ctx.workspaceEnterpriseMap.get("ws_1")).toBe("ent_1");
     expect(ctx.workspaceEnterpriseMap.get("ws_2")).toBe("ent_2");
   });
+
+  it("requests every workspace kind, not just the API's STANDARD-only default", async () => {
+    // A TEMPLATE/MODULE workspace must still be discoverable here —
+    // otherwise getEnterpriseForWorkspace's fallback scan (used when a tool
+    // is given a bare workspace_id with no enterprise_id hint) would miss it.
+    const listWorkspaces = vi.fn().mockResolvedValue({ data: [] });
+    const ctx = serverContext({
+      listEnterprises: vi.fn().mockResolvedValue({ data: [{ id: "ent_1" }] }),
+      listWorkspaces,
+    });
+    const tools = createToolContext(ctx);
+
+    await tools.listAllWorkspaces();
+
+    expect(listWorkspaces).toHaveBeenCalledWith("ent_1", ["STANDARD", "TEMPLATE", "MODULE"]);
+  });
 });
 
 describe("createToolContext — getEnterpriseForWorkspace", () => {
@@ -70,36 +86,6 @@ describe("createToolContext — getEnterpriseForWorkspace", () => {
     await expect(tools.getEnterpriseForWorkspace("ws_missing")).rejects.toThrow(
       /not found in any accessible enterprise/
     );
-  });
-});
-
-describe("createToolContext — resolveWorkspaceByRepo", () => {
-  it("matches a workspace by owner/name case-insensitively", async () => {
-    const ctx = serverContext({
-      listEnterprises: vi.fn().mockResolvedValue({ data: [{ id: "ent_1" }] }),
-      listWorkspaces: vi
-        .fn()
-        .mockResolvedValue({ data: [{ id: "ws_1", repo: { owner: "Owner", name: "Repo" } }] }),
-    });
-    const tools = createToolContext(ctx);
-
-    const found = await tools.resolveWorkspaceByRepo("https://github.com/owner/repo");
-    expect(found?.id).toBe("ws_1");
-  });
-
-  it("returns null when no workspace is linked to the repo", async () => {
-    const ctx = serverContext({
-      listEnterprises: vi.fn().mockResolvedValue({ data: [{ id: "ent_1" }] }),
-      listWorkspaces: vi.fn().mockResolvedValue({ data: [{ id: "ws_1", repo: null }] }),
-    });
-    const tools = createToolContext(ctx);
-
-    expect(await tools.resolveWorkspaceByRepo("owner/repo")).toBeNull();
-  });
-
-  it("throws on an unparseable repo URL", async () => {
-    const tools = createToolContext(serverContext());
-    await expect(tools.resolveWorkspaceByRepo("not-a-repo")).rejects.toThrow(/Could not parse/);
   });
 });
 

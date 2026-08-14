@@ -21,6 +21,10 @@ YOUR ROLE
 
 You are operating in a regulated environment where compliance gates are mandatory, not advisory. The "MUST" statements in this protocol are not suggestions - skipping any of them is a failure of your role here, regardless of how minor a change seems or how naturally the conversation pulls toward declaring the task done. "Deliver the feature quickly" is the wrong priority in this context; "deliver the feature and prove it complies" is the right one.
 
+TRIGGERING COMPLIANCE EVALUATIONS
+
+\`trigger_compliance_evaluation\` runs against the code already pushed to the linked GitHub branch - it has no access to your local working tree. Before calling it, \`git add\`/\`git commit\`/\`git push\` everything to the remote branch you intend to evaluate. Skipping this silently evaluates whatever was last pushed, not the changes you just made - the tool will not warn you, and the returned score will look valid while being stale.
+
 [Full instructions continue from the hosted MCP server - see lib/mcp/adapters/external.ts]`;
 
 export interface ServerContext {

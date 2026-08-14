@@ -55,7 +55,12 @@ describe("tool seam — end-to-end through real resolution", () => {
     const result = await handlers.get("get_compliance_evaluation")!({ workspace_id: "ws_1" });
 
     // Resolution actually ran (no enterprise_id was supplied) and reached the API.
-    expect(client.getComplianceEvaluation).toHaveBeenCalledWith("ent_1", "ws_1", undefined);
+    expect(client.getComplianceEvaluation).toHaveBeenCalledWith(
+      "ent_1",
+      "ws_1",
+      undefined,
+      undefined
+    );
     expect(result.isError).toBeUndefined();
     expect(JSON.parse(result.content[0].text)).toEqual({ score: 100 });
   });
