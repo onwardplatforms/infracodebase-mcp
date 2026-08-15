@@ -1,18 +1,32 @@
 # @infracodebase/mcp
 
-MCP server bringing [infracodebase](https://infracodebase.com)'s compliance, rulesets, and governance to your AI agent. Works with Claude Code/Desktop, Cursor, or any of your favorite MCP client.
+[![npm version](https://img.shields.io/npm/v/@infracodebase/mcp)](https://www.npmjs.com/package/@infracodebase/mcp)
+[![node](https://img.shields.io/node/v/@infracodebase/mcp)](https://nodejs.org)
+[![license](https://img.shields.io/npm/l/@infracodebase/mcp)](https://github.com/onwardplatforms/infracodebase-mcp/blob/main/LICENSE)
+
+MCP server that brings [infracodebase](https://infracodebase.com) compliance, rulesets, and governance to your AI coding agent. It works with Claude Code, Claude Desktop, Cursor, VS Code, and any other MCP client.
+
+## Prerequisites
+
+- Node.js 20 or newer
+- An infracodebase account and an access token from [infracodebase.com/settings/tokens](https://infracodebase.com/settings/tokens)
 
 ## Quickstart
 
-Get a token from [infracodebase.com/settings/tokens](https://infracodebase.com/settings/tokens), then add the server to your MCP client with the token in its `env`.
+Get a token, then add the server to your MCP client with the token in its `env`. One click installs the server config for you, and you paste your token afterward.
 
-For Claude Code:
+[![Add to Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=infracodebase&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkBpbmZyYWNvZGViYXNlL21jcEBsYXRlc3QiXSwiZW52Ijp7IklORlJBQ09ERUJBU0VfVE9LRU4iOiJpY2JfcGF0X3h4eCJ9fQ%3D%3D)
+[![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_Server-0098FF?style=flat&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect?url=vscode%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522infracodebase%2522%252C%2522command%2522%253A%2522npx%2522%252C%2522args%2522%253A%255B%2522-y%2522%252C%2522%2540infracodebase%252Fmcp%2540latest%2522%255D%252C%2522env%2522%253A%257B%2522INFRACODEBASE_TOKEN%2522%253A%2522%2524%257Binput%253Aicb_token%257D%2522%257D%257D)
+
+### Claude Code
 
 ```bash
 claude mcp add infracodebase --env INFRACODEBASE_TOKEN=icb_pat_xxx -- npx -y @infracodebase/mcp@latest
 ```
 
-For Claude Desktop / Cursor and other clients, add to your `mcp.json`:
+### Claude Desktop, Cursor, or any other client
+
+Add the server to your `mcp.json`.
 
 ```json
 {
@@ -26,9 +40,65 @@ For Claude Desktop / Cursor and other clients, add to your `mcp.json`:
 }
 ```
 
+## Tools
+
+The server exposes 16 tools across five areas. Credentials come from your client config, so no tool argument carries a token. Start with `get_workspace_context` to check whether a repo is governed and which rulesets apply.
+
+### Workspace
+
+| Tool | What it does | Key inputs |
+| --- | --- | --- |
+| `list_enterprises` | Lists the enterprises you belong to. | (none) |
+| `list_workspaces` | Lists workspaces in an enterprise, each with its linked repo. | `enterprise_id`, `kinds?` |
+| `get_workspace_context` | Returns a repo's governance status, applicable rulesets, coding guidelines, and latest compliance state. | `workspace_id?` or `repo_url?`, `iac_tool?` |
+
+### Rulesets
+
+| Tool | What it does | Key inputs |
+| --- | --- | --- |
+| `list_workspace_rulesets` | Lists every ruleset relevant to a workspace, including catalog rulesets it has not opted into yet. | `workspace_id` |
+| `get_ruleset_details` | Loads the full text of every rule in a ruleset, including disabled ones. | `workspace_id`, `ruleset_id` |
+
+### Compliance
+
+| Tool | What it does | Key inputs |
+| --- | --- | --- |
+| `get_compliance_evaluation` | Returns the summary of a compliance evaluation, latest by default. | `workspace_id`, `ref?`, `branch?` |
+| `trigger_compliance_evaluation` | Starts an evaluation of the code already pushed to the linked branch. | `workspace_id`, `ref?`, `ruleset_id?`, `rule_id?`, `rule_ids?` |
+| `list_compliance_findings` | Returns the per-rule findings from an evaluation. | `workspace_id`, `ref?`, `status?` |
+| `get_compliance_eval_spec` | Returns the system prompt and conventions the CI evaluator uses. | `workspace_id` |
+
+### Enterprise resources
+
+| Tool | What it does | Key inputs |
+| --- | --- | --- |
+| `list_enterprise_resources` | Lists the rulesets, MCP servers, and workflows available in an enterprise. | `enterprise_id` |
+| `list_modules` | Lists the enterprise's approved reusable modules with source URLs and versions. | `enterprise_id` |
+
+### GitHub and setup
+
+| Tool | What it does | Key inputs |
+| --- | --- | --- |
+| `list_github_installations` | Lists the GitHub App installations for an enterprise. | `enterprise_id` |
+| `list_github_repos` | Lists repositories reachable through a GitHub App installation. | `enterprise_id`, `installation_id`, `search?` |
+| `create_workspace` | Creates a workspace, optionally attaching resources and linking a repo. | `enterprise_id`, `name`, resource and repo fields (optional) |
+| `link_workspace_to_repo` | Links a workspace to a GitHub repo so pushes trigger evaluations. | `workspace_id`, `github_installation_id`, `github_owner`, `github_repo`, `github_branch` |
+| `update_workspace_resources` | Adds or removes rulesets, MCP servers, or workflows on a workspace. | `workspace_id`, add and remove id lists |
+
+Most workspace-scoped tools also take an optional `enterprise_id` that skips the automatic workspace to enterprise lookup.
+
+## Try it
+
+Once connected, prompts like these work well.
+
+- Is this repo governed by infracodebase, and which rulesets apply?
+- Run a compliance evaluation on the branch I just pushed.
+- Show the failing findings from the latest evaluation.
+- Create a workspace for this repo and link it to the main branch.
+
 ## Self-hosted
 
-Add `INFRACODEBASE_API_URL` to the same `env` block (or pass `--api-url`)
+Add `INFRACODEBASE_API_URL` to the same `env` block, or pass `--api-url`.
 
 ```json
 "env": {
@@ -37,7 +107,7 @@ Add `INFRACODEBASE_API_URL` to the same `env` block (or pass `--api-url`)
 }
 ```
 
-No public npm access? Run from a clone instead - same server. Build it, then point your client at `node /abs/path/to/mcp/dist/index.js` with the same `env`:
+No public npm access? Run it from a clone instead. Build it, then point your client at `node /abs/path/to/dist/index.js` with the same `env`.
 
 ```bash
 git clone https://github.com/onwardplatforms/infracodebase-mcp.git
@@ -46,22 +116,26 @@ cd infracodebase-mcp && npm install && npm run build
 
 ## Configuration
 
-Token and API URL resolve from flag → env var → default. There is no stored
-config file: the MCP client owns the configuration and passes it in via `env`.
+Token and API URL resolve from a flag first, then an env var, then a default. There is no stored config file. The MCP client owns the configuration and passes it in through `env`. The server speaks MCP over stdio, so your client launches it and talks to it on stdin and stdout.
 
 | Flag              | Env var                 | Default                            |
 | ----------------- | ----------------------- | ---------------------------------- |
 | `--token=<token>` | `INFRACODEBASE_TOKEN`   | required                           |
 | `--api-url=<url>` | `INFRACODEBASE_API_URL` | `https://infracodebase.com/api/v1` |
 
+## Troubleshooting
+
+- Missing or invalid token. The server needs `INFRACODEBASE_TOKEN` in its `env`. Generate one at [infracodebase.com/settings/tokens](https://infracodebase.com/settings/tokens).
+- TLS errors against a self-hosted instance. If your instance uses a private certificate authority, set `NODE_EXTRA_CA_CERTS` to the path of your root certificate.
+- `get_workspace_context` returns `unlinked`. No workspace matches the repo yet. Create one with `create_workspace`, or link an existing one with `link_workspace_to_repo`.
+
 ## CLI
 
-You rarely run this directly - your MCP client spawns it. When you do, use the
-`npx` form (or `infracodebase` / `infracodebase-mcp` if installed globally):
+You rarely run this directly, since your MCP client spawns it. When you do, use the `npx` form, or `infracodebase` and `infracodebase-mcp` if you installed it globally.
 
 ```bash
-npx -y @infracodebase/mcp@latest          # Start the server (stdio) - default
-npx -y @infracodebase/mcp@latest help     # Full usage
+npx -y @infracodebase/mcp@latest          # Start the server over stdio (default)
+npx -y @infracodebase/mcp@latest help     # Print full usage
 ```
 
 ## Development
@@ -73,12 +147,8 @@ npm run test:run   # unit tests (Vitest)
 npm run smoke      # offline test of the MCP protocol layer
 ```
 
-See [CONTRIBUTING.md](https://github.com/onwardplatforms/infracodebase-mcp/blob/main/CONTRIBUTING.md)
-for the full guide. MIT licensed.
+See [CONTRIBUTING.md](https://github.com/onwardplatforms/infracodebase-mcp/blob/main/CONTRIBUTING.md) for the full guide. MIT licensed.
 
 ## Releases
 
-Versions are published to npm automatically. Each release is tagged `vX.Y.Z`
-with notes generated from the changes in that release - browse the full
-changelog on the
-[GitHub Releases page](https://github.com/onwardplatforms/infracodebase-mcp/releases).
+Versions publish to npm automatically. Each release is tagged `vX.Y.Z` with notes generated from the changes in that release. Browse the full changelog on the [GitHub Releases page](https://github.com/onwardplatforms/infracodebase-mcp/releases).
