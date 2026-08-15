@@ -4,7 +4,7 @@
 [![node](https://img.shields.io/node/v/@infracodebase/mcp)](https://nodejs.org)
 [![license](https://img.shields.io/npm/l/@infracodebase/mcp)](https://github.com/onwardplatforms/infracodebase-mcp/blob/main/LICENSE)
 
-MCP server that brings [infracodebase](https://infracodebase.com) compliance, rulesets, and governance to your AI coding agent. It works with Claude Code, Claude Desktop, Cursor, VS Code, and any other MCP client.
+Give your AI coding agent access to [infracodebase](https://infracodebase.com) compliance, rulesets, and governance. This MCP server works with Claude Code, Claude Desktop, Cursor, VS Code, and any other MCP client.
 
 ## Prerequisites
 
@@ -40,52 +40,61 @@ Add the server to your `mcp.json`.
 }
 ```
 
+## Concepts
+
+A few terms show up throughout the tools.
+
+- Enterprise. Your organization in infracodebase.
+- Workspace. A single project, usually one per repo, with its own rules and compliance history.
+- Ruleset. A named group of compliance rules that apply to a workspace.
+- Evaluation. One compliance run against the code pushed to a workspace's linked branch.
+
 ## Tools
 
-The server exposes 16 tools across five areas. Credentials come from your client config, so no tool argument carries a token. Start with `get_workspace_context` to check whether a repo is governed and which rulesets apply.
+The server gives your agent 16 tools, grouped into five areas. Your token comes from the client config, so you never pass credentials as a tool argument. When in doubt, start with `get_workspace_context`. It tells the agent everything it needs to know about a repo.
 
 ### Workspace
 
 | Tool | What it does | Key inputs |
 | --- | --- | --- |
-| `list_enterprises` | Lists the enterprises you belong to. | (none) |
-| `list_workspaces` | Lists workspaces in an enterprise, each with its linked repo. | `enterprise_id`, `kinds?` |
-| `get_workspace_context` | Returns a repo's governance status, applicable rulesets, coding guidelines, and latest compliance state. | `workspace_id?` or `repo_url?`, `iac_tool?` |
+| `list_enterprises` | Find the enterprises you can access. | (none) |
+| `list_workspaces` | List the projects in an enterprise, and see which repo each one is linked to. | `enterprise_id`, `kinds?` |
+| `get_workspace_context` | The best place to start. Tells you whether a repo is governed, which rules apply, its coding guidelines, and its latest compliance result. | `workspace_id?` or `repo_url?`, `iac_tool?` |
 
 ### Rulesets
 
 | Tool | What it does | Key inputs |
 | --- | --- | --- |
-| `list_workspace_rulesets` | Lists every ruleset relevant to a workspace, including catalog rulesets it has not opted into yet. | `workspace_id` |
-| `get_ruleset_details` | Loads the full text of every rule in a ruleset, including disabled ones. | `workspace_id`, `ruleset_id` |
+| `list_workspace_rulesets` | See every ruleset that could apply to a workspace, including ones it has not turned on yet. | `workspace_id` |
+| `get_ruleset_details` | Read the full text of every rule in a ruleset, including the ones that are turned off. | `workspace_id`, `ruleset_id` |
 
 ### Compliance
 
 | Tool | What it does | Key inputs |
 | --- | --- | --- |
-| `get_compliance_evaluation` | Returns the summary of a compliance evaluation, latest by default. | `workspace_id`, `ref?`, `branch?` |
-| `trigger_compliance_evaluation` | Starts an evaluation of the code already pushed to the linked branch. | `workspace_id`, `ref?`, `ruleset_id?`, `rule_id?`, `rule_ids?` |
-| `list_compliance_findings` | Returns the per-rule findings from an evaluation. | `workspace_id`, `ref?`, `status?` |
-| `get_compliance_eval_spec` | Returns the system prompt and conventions the CI evaluator uses. | `workspace_id` |
+| `get_compliance_evaluation` | Get the result of a compliance run. Shows the latest by default. | `workspace_id`, `ref?`, `branch?` |
+| `trigger_compliance_evaluation` | Start a compliance run on the code you have already pushed to the linked branch. | `workspace_id`, `ref?`, `ruleset_id?`, `rule_id?`, `rule_ids?` |
+| `list_compliance_findings` | See the pass or fail result for each rule in a run. | `workspace_id`, `ref?`, `status?` |
+| `get_compliance_eval_spec` | See the exact instructions the compliance checker follows. | `workspace_id` |
 
 ### Enterprise resources
 
 | Tool | What it does | Key inputs |
 | --- | --- | --- |
-| `list_enterprise_resources` | Lists the rulesets, MCP servers, and workflows available in an enterprise. | `enterprise_id` |
-| `list_modules` | Lists the enterprise's approved reusable modules with source URLs and versions. | `enterprise_id` |
+| `list_enterprise_resources` | See the rulesets, MCP servers, and workflows an enterprise offers. | `enterprise_id` |
+| `list_modules` | See the approved, reusable infrastructure modules, with their source and version. | `enterprise_id` |
 
 ### GitHub and setup
 
 | Tool | What it does | Key inputs |
 | --- | --- | --- |
-| `list_github_installations` | Lists the GitHub App installations for an enterprise. | `enterprise_id` |
-| `list_github_repos` | Lists repositories reachable through a GitHub App installation. | `enterprise_id`, `installation_id`, `search?` |
-| `create_workspace` | Creates a workspace, optionally attaching resources and linking a repo. | `enterprise_id`, `name`, resource and repo fields (optional) |
-| `link_workspace_to_repo` | Links a workspace to a GitHub repo so pushes trigger evaluations. | `workspace_id`, `github_installation_id`, `github_owner`, `github_repo`, `github_branch` |
-| `update_workspace_resources` | Adds or removes rulesets, MCP servers, or workflows on a workspace. | `workspace_id`, add and remove id lists |
+| `list_github_installations` | See which GitHub App installations an enterprise has. | `enterprise_id` |
+| `list_github_repos` | See the repos a GitHub App installation can reach. | `enterprise_id`, `installation_id`, `search?` |
+| `create_workspace` | Create a workspace, and optionally attach rules and link a repo. | `enterprise_id`, `name`, resource and repo fields (optional) |
+| `link_workspace_to_repo` | Connect a workspace to a GitHub repo so every push gets checked. | `workspace_id`, `github_installation_id`, `github_owner`, `github_repo`, `github_branch` |
+| `update_workspace_resources` | Attach or detach rulesets, MCP servers, or workflows on a workspace. | `workspace_id`, add and remove id lists |
 
-Most workspace-scoped tools also take an optional `enterprise_id` that skips the automatic workspace to enterprise lookup.
+Most workspace-scoped tools also take an optional `enterprise_id`. It lets the server skip an extra lookup, and you can leave it out.
 
 ## Try it
 
