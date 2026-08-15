@@ -13,7 +13,7 @@ Give your AI coding agent access to [infracodebase](https://infracodebase.com) c
 
 ## Quickstart
 
-Get a token, then add the server to your MCP client with the token in its `env`. One click installs the server config for you, and you paste your token afterward.
+Get a token, then connect the server to your MCP client. The one-click buttons set up the config for you, and you add your token afterward. If you would rather set it up by hand, use the snippets below.
 
 [![Add to Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=infracodebase&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkBpbmZyYWNvZGViYXNlL21jcEBsYXRlc3QiXSwiZW52Ijp7IklORlJBQ09ERUJBU0VfVE9LRU4iOiJpY2JfcGF0X3h4eCJ9fQ%3D%3D)
 [![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_Server-0098FF?style=flat&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect?url=vscode%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522infracodebase%2522%252C%2522command%2522%253A%2522npx%2522%252C%2522args%2522%253A%255B%2522-y%2522%252C%2522%2540infracodebase%252Fmcp%2540latest%2522%255D%252C%2522env%2522%253A%257B%2522INFRACODEBASE_TOKEN%2522%253A%2522%2524%257Binput%253Aicb_token%257D%2522%257D%257D)
@@ -125,7 +125,7 @@ cd infracodebase-mcp && npm install && npm run build
 
 ## Configuration
 
-Token and API URL resolve from a flag first, then an env var, then a default. There is no stored config file. The MCP client owns the configuration and passes it in through `env`. The server speaks MCP over stdio, so your client launches it and talks to it on stdin and stdout.
+The server reads its token and API URL from a command flag first, then an environment variable, then a built-in default. There is no config file to manage. Your MCP client holds these settings and passes them in through `env`. The server talks to your client over stdio, the standard MCP transport, so the client starts the server and exchanges messages on stdin and stdout.
 
 | Flag              | Env var                 | Default                            |
 | ----------------- | ----------------------- | ---------------------------------- |
@@ -140,7 +140,7 @@ Token and API URL resolve from a flag first, then an env var, then a default. Th
 
 ## CLI
 
-You rarely run this directly, since your MCP client spawns it. When you do, use the `npx` form, or `infracodebase` and `infracodebase-mcp` if you installed it globally.
+You rarely run this yourself, since your MCP client starts it for you. When you do, use the `npx` form, or `infracodebase` and `infracodebase-mcp` if you installed it globally.
 
 ```bash
 npx -y @infracodebase/mcp@latest          # Start the server over stdio (default)
