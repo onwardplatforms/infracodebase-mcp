@@ -3,14 +3,19 @@ name: Release
 # AI-assisted release, mirroring the main application's release process
 # (.github/workflows/app-deployment.yml in the infracodebase repo).
 #
-# Chain: test → release. On a push to main, the `release` job asks Claude to
-# classify the changes since the last v* tag as patch/minor/major, compute the
-# next semantic version, and write user-facing release notes. It then creates
-# the git tag and a GitHub Release.
+# Chain: test → release → publish. On a push to main, the `release` job asks
+# Claude to classify the changes since the last v* tag as patch/minor/major,
+# compute the next semantic version, and write user-facing release notes. It
+# then creates the git tag and a GitHub Release, and the `publish` job calls
+# publish.yml to push that exact tag's version to npm — so the AI-decided
+# version is the single source of truth for the tag, the GitHub Release, and
+# the npm package.
 #
-# Creating the Release fires `publish.yml` (`on: release: created`), which
-# publishes that exact tag's version to npm — so the AI-decided version is the
-# single source of truth for both the GitHub Release and the npm package.
+# NOTE: the `publish` job calls publish.yml directly (workflow_call) rather than
+# relying on publish.yml's `release: created` trigger. A GitHub Release created
+# by this workflow runs under GITHUB_TOKEN, which by design does NOT fire the
+# `release` event — so that trigger never ran and nothing reached npm. Calling
+# publish.yml inside this run fixes that.
 #
 # Unlike the application (which deploys by image tag), this repo does not commit
 # the bumped version back to main: the version lives in the tag, and publish.yml
@@ -82,6 +87,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      skip: ${{ steps.collect.outputs.skip }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -259,7 +267,10 @@ jobs:
             --arg ver "$CURRENT_VERSION" \
             '{
               model: $model,
-              max_tokens: 1024,
+              # 8192, not 1024: large releases (e.g. a major with many notes)
+              # overflow a small budget and the response is truncated mid-string,
+              # producing invalid JSON that fails the parse below.
+              max_tokens: 8192,
               messages: [
                 { role: "user", content: ($template | gsub("__VERSION__"; $ver) | gsub("__PREV_NOTES__"; $prev) | gsub("__COMMITS__"; $commits) | gsub("__DIFF__"; $diff)) }
               ]
@@ -352,8 +363,17 @@ jobs:
 
           printf '%s' "$RELEASE_NOTES" > /tmp/release-notes.md
 
-          # Creating the release fires publish.yml, which publishes v${VERSION}
-          # to npm.
+          # Create the tag's GitHub Release. Publishing to npm is handled by the
+          # `publish` job below (it calls publish.yml with this tag).
           gh release create "v${VERSION}" \
             --title "v${VERSION}" \
             --notes-file /tmp/release-notes.md
+
+  publish:
+    name: Publish to npm
+    needs: release
+    if: ${{ inputs.dry_run != true && needs.release.outputs.skip != 'true' && needs.release.outputs.version != '' }}
+    uses: ./.github/workflows/publish.yml
+    with:
+      tag: v${{ needs.release.outputs.version }}
+    secrets: inherit
