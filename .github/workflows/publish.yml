@@ -66,6 +66,41 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
 
+      # Fail fast, and legibly, on a bad NPM_TOKEN. The registry answers an
+      # unauthorized PUT on a scoped package with 404 rather than 403 (it will
+      # not confirm the package exists to a caller who cannot write it), so a
+      # token problem otherwise surfaces as a bare "'@scope/pkg@x.y.z' is not
+      # in this registry" only after lint, test, build, and provenance signing.
+      - name: Verify npm credentials
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          PKG=$(jq -r .name package.json)
+
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::error::NPM_TOKEN is empty or unset. Add it under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+          if ! NPM_USER=$(npm whoami 2>&1); then
+            echo "::error::NPM_TOKEN was rejected by the registry — it is invalid, expired, or revoked. Generate a new automation token with publish access to $PKG and update the NPM_TOKEN secret."
+            exit 1
+          fi
+          echo "::notice::Authenticated to npm as $NPM_USER"
+
+          # A token can authenticate yet still lack write access to this
+          # package. Only checkable once the package exists; the first publish
+          # of a brand-new name has no owner list to consult.
+          if OWNERS=$(npm owner ls "$PKG" 2>/dev/null) && [ -n "$OWNERS" ]; then
+            if ! printf '%s\n' "$OWNERS" | awk '{print $1}' | grep -qx "$NPM_USER"; then
+              echo "::error::npm user '$NPM_USER' is not a maintainer of $PKG, so publishing will fail. Maintainers are: $(printf '%s' "$OWNERS" | awk '{print $1}' | paste -sd, -)"
+              exit 1
+            fi
+            echo "::notice::$NPM_USER has publish access to $PKG"
+          else
+            echo "::notice::$PKG has no owner list yet — treating this as a first publish."
+          fi
+
       - name: Install dependencies
         run: npm ci
 
