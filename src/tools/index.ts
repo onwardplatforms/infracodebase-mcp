@@ -27,6 +27,8 @@ import { listEnterpriseResources } from "./list_enterprise_resources.js";
 import { listModules } from "./list_modules.js";
 import { listGithubInstallations } from "./list_github_installations.js";
 import { listGithubRepos } from "./list_github_repos.js";
+import { listVcsConnections } from "./list_vcs_connections.js";
+import { listVcsRepos } from "./list_vcs_repos.js";
 import { createWorkspace } from "./create_workspace.js";
 import { linkWorkspaceToRepo } from "./link_workspace_to_repo.js";
 import { updateWorkspaceResources } from "./update_workspace_resources.js";
@@ -48,7 +50,9 @@ export const TOOLS: ToolDef[] = [
   // Enterprise resources
   listEnterpriseResources,
   listModules,
-  // GitHub
+  // Version control (vcs_* generics preferred; github_* are stable aliases)
+  listVcsConnections,
+  listVcsRepos,
   listGithubInstallations,
   listGithubRepos,
   createWorkspace,

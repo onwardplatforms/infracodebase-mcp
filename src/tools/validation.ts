@@ -161,6 +161,21 @@ export const TOOL_SHAPES = {
     enterprise_id: z.string().min(1).describe("Enterprise ID."),
   },
 
+  list_vcs_connections: {
+    enterprise_id: z.string().min(1).describe("Enterprise ID."),
+  },
+
+  list_vcs_repos: {
+    enterprise_id: z.string().min(1).describe("Enterprise ID."),
+    connection_id: z
+      .string()
+      .min(1)
+      .describe(
+        "Connection reference from list_vcs_connections — pass either `id` or `provider_connection_id`."
+      ),
+    search: z.string().describe("Optional search query to filter repos.").optional(),
+  },
+
   list_github_repos: {
     enterprise_id: z.string().min(1).describe("Enterprise ID."),
     installation_id: z
@@ -233,8 +248,13 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   list_modules:
     "Return the enterprise's approved reusable infrastructure modules with source URLs and versions.",
   list_github_installations:
-    "Return the GitHub App installations configured for an enterprise. Use when creating a workspace.",
-  list_github_repos: "Return repositories accessible via a GitHub App installation.",
+    "Return the GitHub App installations configured for an enterprise. Use when creating a workspace. (Stable alias — prefer list_vcs_connections.)",
+  list_github_repos:
+    "Return repositories accessible via a GitHub App installation. (Stable alias — prefer list_vcs_repos.)",
+  list_vcs_connections:
+    "Return the version-control connections configured for an enterprise, across all providers. Each connection carries a `provider` field — code against it rather than assuming GitHub. Use when creating or linking a workspace.",
+  list_vcs_repos:
+    "Return repositories accessible via a version-control connection, from list_vcs_connections. `display_path` is the provider's full repo path (owner/name on GitHub).",
   create_workspace:
     "Create a workspace with optional rulesets, MCP servers, and workflows. Call list_enterprise_resources first.",
   link_workspace_to_repo:
