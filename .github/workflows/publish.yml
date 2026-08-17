@@ -129,3 +129,27 @@ jobs:
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # npm points at ~/.npm/_logs/*.log on failure, but the runner is destroyed
+      # with the job, so that path is unreadable by the time anyone looks. Keep
+      # the log as an artifact instead. Tokens are redacted in these logs, and
+      # Actions masks secrets in artifacts, but the collection step still greps
+      # out any authToken line as a belt-and-braces measure.
+      - name: Upload npm debug log
+        if: failure()
+        run: |
+          mkdir -p "${{ runner.temp }}/npm-logs"
+          if compgen -G "$HOME/.npm/_logs/*.log" > /dev/null; then
+            for f in "$HOME"/.npm/_logs/*.log; do
+              grep -v -i "authToken" "$f" > "${{ runner.temp }}/npm-logs/$(basename "$f")" || true
+            done
+          else
+            echo "No npm debug logs were written." > "${{ runner.temp }}/npm-logs/none.txt"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: npm-debug-log
+          path: ${{ runner.temp }}/npm-logs
+          retention-days: 14
