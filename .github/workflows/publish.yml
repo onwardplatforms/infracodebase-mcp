@@ -1,13 +1,34 @@
 name: Publish to npm
 
-# Fires when release.yml (or a manual GitHub Release) creates a v* release.
-# The release tag is the single source of truth for the published version:
-# the "Set version from release tag" step writes it into package.json before
-# publishing, so the npm version always matches the tag and GitHub Release.
+# Publishes a v* tag to npm. The tag is the single source of truth for the
+# published version: the "Set version from tag" step writes it into
+# package.json before publishing, so the npm version always matches the tag.
+#
+# Triggered three ways:
+#   - workflow_call: release.yml calls this after it tags + creates the GitHub
+#     Release, so publishing happens inside the release run (the reliable path).
+#   - workflow_dispatch: manually publish a specific existing tag (recovery /
+#     re-publish escape hatch).
+#   - release [created]: a release made by hand in the GitHub UI still auto-
+#     publishes. (Releases created by release.yml run under GITHUB_TOKEN, which
+#     by design does NOT fire this event — that's why release.yml calls us
+#     directly via workflow_call instead of relying on it.)
 #
 # Required secret: NPM_TOKEN (npm automation token with publish access).
 
 on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "The v* tag to publish (e.g. v1.1.0)"
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The v* tag to publish (e.g. v1.1.0)"
+        required: true
+        type: string
   release:
     types: [created]
 
@@ -20,8 +41,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # On a release event, checkout defaults to the release's tag ref.
+      # Resolve the tag from whichever trigger fired.
+      - name: Resolve tag
+        id: resolve
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          TAG="${RELEASE_TAG:-$INPUT_TAG}"
+          if [ -z "$TAG" ]; then
+            echo "::error::No tag to publish (neither a release tag nor an input tag was provided)."
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      # Check out the tag's exact commit (not the branch head).
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.resolve.outputs.tag }}
 
       - uses: actions/setup-node@v4
         with:
@@ -32,13 +69,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Set version from release tag
+      - name: Set version from tag
         env:
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ steps.resolve.outputs.tag }}
         run: |
           VERSION="${TAG#v}"
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Release tag '$TAG' is not a vX.Y.Z semantic version."
+            echo "::error::Tag '$TAG' is not a vX.Y.Z semantic version."
             exit 1
           fi
           # Write the tag's version into package.json (no commit, no git tag).
