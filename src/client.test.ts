@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { readFileSync } from "fs";
 import { InfracodebaseClient, ApiError } from "./client.js";
 
 /**
@@ -28,6 +29,16 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
+/**
+ * The client stamps the package's own version into User-Agent, so the expected
+ * header has to be derived rather than written as a literal: publish.yml
+ * rewrites package.json's version from the release tag before running these
+ * tests, and a hardcoded version fails every release.
+ */
+const packageVersion = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf-8"),
+).version as string;
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -51,7 +62,7 @@ describe("InfracodebaseClient — request plumbing", () => {
     expect(lastCall(fetchMock).init.headers).toMatchObject({
       Authorization: "Bearer secret",
       "Content-Type": "application/json",
-      "User-Agent": "@infracodebase/mcp/1.0.0",
+      "User-Agent": `@infracodebase/mcp/${packageVersion}`,
     });
   });
 
