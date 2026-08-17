@@ -22,6 +22,13 @@ name: Release
 # sets package.json from the tag at publish time. That keeps the release job off
 # the protected main branch.
 #
+# "Nothing to release" is decided by npm, not by the git tag. If a previous run
+# tagged and released but its publish failed, the tag exists while npm never got
+# the version — and since a manual re-run adds no commits, a commits-only guard
+# would refuse to ever ship it. So when there are no new commits but npm is
+# behind the last tag, the run republishes that existing tag: it skips the
+# version/notes generation and the tagging, and goes straight to publish.
+#
 # Escape hatches (workflow_dispatch):
 #   - version_override: force a specific version, bypassing the AI decision.
 #   - dry_run: generate and print the notes without tagging or releasing.
@@ -88,7 +95,9 @@ jobs:
     permissions:
       contents: write
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      # On a republish the version step is skipped, so fall back to the existing
+      # tag's version that `collect` resolved.
+      version: ${{ steps.version.outputs.version || steps.collect.outputs.republish_version }}
       skip: ${{ steps.collect.outputs.skip }}
     steps:
       - uses: actions/checkout@v4
@@ -104,21 +113,64 @@ jobs:
             LAST_TAG=$(git rev-list --max-parents=0 HEAD)
           fi
           echo "tag=$LAST_TAG" >> "$GITHUB_OUTPUT"
+          # The bare version, empty when LAST_TAG is a commit SHA (no tags yet).
+          TAG_VERSION="${LAST_TAG#v}"
+          if [[ ! "$TAG_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            TAG_VERSION=""
+          fi
+          echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+
+      # npm is the real deployment target, so it — not the git tag — decides
+      # whether there is anything left to ship.
+      - name: Get published npm version
+        id: npm
+        run: |
+          PKG=$(jq -r .name package.json)
+          PUBLISHED=$(npm view "$PKG" version 2>/dev/null || echo "")
+          if [ -z "$PUBLISHED" ]; then
+            echo "::notice::$PKG has no published version on npm yet."
+          else
+            echo "::notice::npm currently has $PKG@$PUBLISHED"
+          fi
+          echo "published=$PUBLISHED" >> "$GITHUB_OUTPUT"
 
       - name: Collect commits and diff
         id: collect
+        env:
+          PUBLISHED: ${{ steps.npm.outputs.published }}
+          TAG_VERSION: ${{ steps.last-tag.outputs.version }}
         run: |
           LAST_TAG="${{ steps.last-tag.outputs.tag }}"
 
           COMMITS=$(git log "$LAST_TAG"...HEAD --oneline)
           if [ -z "$COMMITS" ]; then
-            # No releasable commits since the last tag (e.g. a re-run). Skip
-            # cleanly rather than failing the run red.
-            echo "::notice::No commits since $LAST_TAG — nothing to release."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
+            # Nothing new to version. That does NOT mean nothing to ship: if a
+            # previous run tagged and released but its publish failed, the tag
+            # exists while npm never received it. Blocking here would deadlock
+            # that recovery — a manual re-run can never add commits.
+            NEWEST=$(printf '%s\n' "$PUBLISHED" "$TAG_VERSION" | sort -V | tail -1)
+
+            if [ -z "$TAG_VERSION" ]; then
+              echo "::notice::No commits since $LAST_TAG — nothing to release."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+            elif [ "$PUBLISHED" = "$TAG_VERSION" ]; then
+              echo "::notice::No commits since $LAST_TAG and npm already has $TAG_VERSION — nothing to release."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+            elif [ "$NEWEST" = "$TAG_VERSION" ]; then
+              echo "::notice::No commits since $LAST_TAG, but npm has '${PUBLISHED:-nothing}' — republishing the existing tag $LAST_TAG."
+              echo "skip=false" >> "$GITHUB_OUTPUT"
+              echo "republish=true" >> "$GITHUB_OUTPUT"
+              echo "republish_version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+            else
+              # npm is ahead of the newest tag — publishing would move the
+              # `latest` dist-tag backwards, so stop and let a human look.
+              echo "::warning::npm has $PUBLISHED, which is newer than the last tag $LAST_TAG. Skipping."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+            fi
             exit 0
           fi
           echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "republish=false" >> "$GITHUB_OUTPUT"
           echo "$COMMITS" > /tmp/commits.txt
 
           # Limit the diff to the sources that affect the published package.
@@ -129,15 +181,17 @@ jobs:
             README.md | head -c 500000 > /tmp/diff.txt
 
       - name: Get previous release notes
-        if: ${{ steps.collect.outputs.skip != 'true' }}
+        if: ${{ steps.collect.outputs.skip != 'true' && steps.collect.outputs.republish != 'true' }}
         run: |
           gh release view --json body -q .body 2>/dev/null > /tmp/prev-notes.txt || echo "" > /tmp/prev-notes.txt
         env:
           GH_TOKEN: ${{ github.token }}
 
+      # Skipped on a republish: the version already exists, along with its tag
+      # and GitHub Release. Only the npm publish is outstanding.
       - name: Determine version
         id: version
-        if: ${{ steps.collect.outputs.skip != 'true' }}
+        if: ${{ steps.collect.outputs.skip != 'true' && steps.collect.outputs.republish != 'true' }}
         env:
           INPUT_LAST_TAG: ${{ steps.last-tag.outputs.tag }}
           INPUT_VERSION_OVERRIDE: ${{ inputs.version_override }}
@@ -344,8 +398,9 @@ jobs:
           echo "$NOTES"
           echo "-----------------------------"
 
+      # Skipped on a republish — the tag and Release already exist.
       - name: Create tag and release
-        if: ${{ inputs.dry_run != true && steps.collect.outputs.skip != 'true' }}
+        if: ${{ inputs.dry_run != true && steps.collect.outputs.skip != 'true' && steps.collect.outputs.republish != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_NOTES: ${{ steps.version.outputs.notes }}
