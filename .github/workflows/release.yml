@@ -17,6 +17,13 @@ name: Release
 # `release` event — so that trigger never ran and nothing reached npm. Calling
 # publish.yml inside this run fixes that.
 #
+# This file is the npm Trusted Publisher entry point. npm authenticates a
+# publish against the workflow that *started* the run, not the one containing
+# the `npm publish` command — and since this workflow calls publish.yml, that is
+# this file. So the Trusted Publisher on npmjs.com is configured against
+# release.yml, and `id-token: write` is granted on the publish job below (a
+# called workflow only receives permissions the caller job grants explicitly).
+#
 # Unlike the application (which deploys by image tag), this repo does not commit
 # the bumped version back to main: the version lives in the tag, and publish.yml
 # sets package.json from the tag at publish time. That keeps the release job off
@@ -429,11 +436,11 @@ jobs:
     needs: release
     if: ${{ inputs.dry_run != true && needs.release.outputs.skip != 'true' && needs.release.outputs.version != '' }}
     # A caller job must explicitly grant every permission the called workflow
-    # requests; publish.yml needs id-token: write for npm provenance.
+    # requests; publish.yml needs id-token: write to authenticate to npm over
+    # OIDC. No `secrets: inherit` — trusted publishing means it needs none.
     permissions:
       contents: read
       id-token: write
     uses: ./.github/workflows/publish.yml
     with:
       tag: v${{ needs.release.outputs.version }}
-    secrets: inherit
