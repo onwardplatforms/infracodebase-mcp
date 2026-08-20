@@ -12,7 +12,6 @@ import { InfracodebaseClient } from "./client.js";
 import { registerAllTools } from "./tools/index.js";
 import { VERSION } from "./version.js";
 
-// Same instructions as the hosted MCP server
 const SERVER_INSTRUCTIONS = `**Before writing or modifying any infrastructure-as-code in this session - Terraform, Pulumi, CloudFormation, Bicep, Kubernetes manifests, Helm, Ansible - including bootstrapping IaC in an empty repo, you MUST call \`get_workspace_context\` first.** The result tells you whether this repo is governed by infracodebase and which rulesets apply. This trigger holds for every IaC turn, not just session start.
 
 You are connected to infracodebase, a governance and compliance platform for infrastructure-as-code. This server gives you access to the organization's coding guidelines, rulesets, compliance state, and the ability to create new workspaces.
@@ -23,9 +22,11 @@ You are operating in a regulated environment where compliance gates are mandator
 
 TRIGGERING COMPLIANCE EVALUATIONS
 
-\`trigger_compliance_evaluation\` runs against the code already pushed to the linked GitHub branch - it has no access to your local working tree. Before calling it, \`git add\`/\`git commit\`/\`git push\` everything to the remote branch you intend to evaluate. Skipping this silently evaluates whatever was last pushed, not the changes you just made - the tool will not warn you, and the returned score will look valid while being stale.
+\`trigger_compliance_evaluation\` runs against the code already pushed to the workspace's linked branch - it has no access to your local working tree. Before calling it, \`git add\`/\`git commit\`/\`git push\` everything to the remote branch you intend to evaluate. Skipping this silently evaluates whatever was last pushed, not the changes you just made - the tool will not warn you, and the returned score will look valid while being stale.
 
-[Full instructions continue from the hosted MCP server - see lib/mcp/adapters/external.ts]`;
+CONNECTING REPOSITORIES
+
+Workspaces link to a repo through a version-control connection (GitHub, GitLab, ...). Discover them with \`list_vcs_connections\`, browse a connection's repos with \`list_vcs_repos\`, then pass connection_id + repo_path (the repo's full provider path, verbatim) when creating or linking. Always relay a \`warning\` in a link/create result: it means the delivery webhook failed to register and pushes will NOT trigger compliance until the repo is re-linked.`;
 
 export interface ServerContext {
   client: InfracodebaseClient;
