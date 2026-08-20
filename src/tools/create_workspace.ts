@@ -1,8 +1,8 @@
 import type { ToolDef } from "./helpers.js";
 
 /**
- * Create a workspace, optionally linking it to a GitHub repo. The repo link is
- * only sent when all four github_* fields are present.
+ * Create a workspace, optionally linking it to a repo (any provider). The repo
+ * link is only sent when all three repo fields are present.
  */
 export const createWorkspace: ToolDef = {
   name: "create_workspace",
@@ -15,12 +15,11 @@ export const createWorkspace: ToolDef = {
       workflow_ids: a.workflow_ids,
     };
 
-    if (a.github_installation_id && a.github_owner && a.github_repo && a.github_branch) {
-      body.github = {
-        installation_id: a.github_installation_id,
-        owner: a.github_owner,
-        repo: a.github_repo,
-        branch: a.github_branch,
+    if (a.connection_id && a.repo_path && a.branch) {
+      body.repository = {
+        connection_id: a.connection_id,
+        path: a.repo_path,
+        branch: a.branch,
       };
     }
 

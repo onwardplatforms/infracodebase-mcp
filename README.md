@@ -84,14 +84,14 @@ The server gives your agent 16 tools, grouped into five areas. Your token comes 
 | `list_enterprise_resources` | See the rulesets, MCP servers, and workflows an enterprise offers. | `enterprise_id` |
 | `list_modules` | See the approved, reusable infrastructure modules, with their source and version. | `enterprise_id` |
 
-### GitHub and setup
+### Version control and setup
 
 | Tool | What it does | Key inputs |
 | --- | --- | --- |
-| `list_github_installations` | See which GitHub App installations an enterprise has. | `enterprise_id` |
-| `list_github_repos` | See the repos a GitHub App installation can reach. | `enterprise_id`, `installation_id`, `search?` |
+| `list_vcs_connections` | See the version-control connections (GitHub, GitLab, ...) an enterprise has. | `enterprise_id`, `provider?` |
+| `list_vcs_repos` | See the repos a version-control connection can reach. | `enterprise_id`, `connection_id`, `search?` |
 | `create_workspace` | Create a workspace, and optionally attach rules and link a repo. | `enterprise_id`, `name`, resource and repo fields (optional) |
-| `link_workspace_to_repo` | Connect a workspace to a GitHub repo so every push gets checked. | `workspace_id`, `github_installation_id`, `github_owner`, `github_repo`, `github_branch` |
+| `link_workspace_to_repo` | Connect a workspace to a repo (any provider) so every push gets checked. | `workspace_id`, `connection_id`, `repo_path`, `branch` |
 | `update_workspace_resources` | Attach or detach rulesets, MCP servers, or workflows on a workspace. | `workspace_id`, add and remove id lists |
 
 Most workspace-scoped tools also take an optional `enterprise_id`. It lets the server skip an extra lookup, and you can leave it out.

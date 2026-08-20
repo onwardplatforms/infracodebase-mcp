@@ -214,23 +214,25 @@ export class InfracodebaseClient {
   }
 
   // ---------------------------------------------------------------------------
-  // GitHub operations
+  // Version-control operations
   // ---------------------------------------------------------------------------
 
-  async listGitHubInstallations(enterpriseId: string) {
+  /** Every connected source (GitHub orgs, GitLab connections, …), each
+   *  addressable by connection id. Optional provider key filters the list. */
+  async listVcsConnections(enterpriseId: string, provider?: string) {
+    const query = provider ? `?provider=${encodeURIComponent(provider)}` : "";
     return this.request<unknown>(
       "GET",
-      `/enterprises/${enterpriseId}/integrations/github/installations`
+      `/enterprises/${enterpriseId}/integrations/vcs/connections${query}`
     );
   }
 
-  async listGitHubRepos(enterpriseId: string, installationId: string, search?: string) {
-    const searchParams = new URLSearchParams();
-    if (search) searchParams.set("search", search);
-    const query = searchParams.toString();
+  /** Repositories a connection can reach — identical shape for every provider.
+   *  Each repo carries its full provider `path` (GitLab subgroups included). */
+  async listVcsRepos(enterpriseId: string, connectionId: string, search?: string) {
+    const query = search ? `?search=${encodeURIComponent(search)}` : "";
     const path =
-      `/enterprises/${enterpriseId}/integrations/github/installations/${installationId}/repos` +
-      (query ? `?${query}` : "");
+      `/enterprises/${enterpriseId}/integrations/vcs/connections/${connectionId}/repos` + query;
 
     return this.request<unknown>("GET", path);
   }
@@ -243,9 +245,8 @@ export class InfracodebaseClient {
     enterpriseId: string,
     workspaceId: string,
     params: {
-      installation_id: string;
-      owner: string;
-      repo: string;
+      connection_id: string;
+      path: string;
       branch: string;
     }
   ) {

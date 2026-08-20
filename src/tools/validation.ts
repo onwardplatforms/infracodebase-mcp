@@ -157,16 +157,18 @@ export const TOOL_SHAPES = {
     enterprise_id: z.string().min(1).describe("Enterprise ID from list_enterprises."),
   },
 
-  list_github_installations: {
+  list_vcs_connections: {
     enterprise_id: z.string().min(1).describe("Enterprise ID."),
-  },
-
-  list_github_repos: {
-    enterprise_id: z.string().min(1).describe("Enterprise ID."),
-    installation_id: z
+    provider: z
       .string()
       .min(1)
-      .describe("GitHub installation ID from list_github_installations."),
+      .describe("Optional provider key to filter by (e.g. 'github', 'gitlab').")
+      .optional(),
+  },
+
+  list_vcs_repos: {
+    enterprise_id: z.string().min(1).describe("Enterprise ID."),
+    connection_id: z.string().min(1).describe("Connection ID from list_vcs_connections."),
     search: z.string().describe("Optional search query to filter repos.").optional(),
   },
 
@@ -177,21 +179,36 @@ export const TOOL_SHAPES = {
     ruleset_ids: idList("Ruleset IDs to attach."),
     mcp_server_ids: idList("MCP server IDs to attach."),
     workflow_ids: idList("Workflow IDs to attach."),
-    github_installation_id: z.string().min(1).describe("Optional GitHub installation ID.").optional(),
-    github_owner: z.string().min(1).describe("GitHub repo owner (if linking).").optional(),
-    github_repo: z.string().min(1).describe("GitHub repo name (if linking).").optional(),
-    github_branch: z.string().min(1).describe("GitHub branch (if linking).").optional(),
+    connection_id: z
+      .string()
+      .min(1)
+      .describe("Version-control connection ID from list_vcs_connections (if linking a repo).")
+      .optional(),
+    repo_path: z
+      .string()
+      .min(1)
+      .describe(
+        "Full provider path of the repo to link, exactly as returned by list_vcs_repos " +
+          "(GitLab subgroups included, e.g. 'group/sub/project')."
+      )
+      .optional(),
+    branch: z.string().min(1).describe("Branch to clone (if linking, e.g. 'main').").optional(),
   },
 
   link_workspace_to_repo: {
     workspace_id: z.string().min(1).describe("Workspace ID."),
-    github_installation_id: z
+    connection_id: z
       .string()
       .min(1)
-      .describe("GitHub installation ID from list_github_installations."),
-    github_owner: z.string().min(1).describe("GitHub repo owner."),
-    github_repo: z.string().min(1).describe("GitHub repo name."),
-    github_branch: z.string().min(1).describe("Branch to clone (e.g. 'main')."),
+      .describe("Version-control connection ID from list_vcs_connections."),
+    repo_path: z
+      .string()
+      .min(1)
+      .describe(
+        "Full provider path of the repo, exactly as returned by list_vcs_repos " +
+          "(GitLab subgroups included, e.g. 'group/sub/project')."
+      ),
+    branch: z.string().min(1).describe("Branch to clone (e.g. 'main')."),
     ...enterpriseHint,
   },
 
@@ -232,13 +249,14 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
     "Return the rulesets, MCP servers, and workflows available in an enterprise. Each resource has a required flag.",
   list_modules:
     "Return the enterprise's approved reusable infrastructure modules with source URLs and versions.",
-  list_github_installations:
-    "Return the GitHub App installations configured for an enterprise. Use when creating a workspace.",
-  list_github_repos: "Return repositories accessible via a GitHub App installation.",
+  list_vcs_connections:
+    "Return the version-control connections (GitHub, GitLab, …) configured for an enterprise, each with its provider, host, and account. Use a connection's id with list_vcs_repos and when linking a repo.",
+  list_vcs_repos:
+    "Return repositories accessible via a version-control connection — same shape for every provider. Each repo's `path` is the full provider path (GitLab subgroups included); pass it verbatim as repo_path when linking.",
   create_workspace:
-    "Create a workspace with optional rulesets, MCP servers, and workflows. Call list_enterprise_resources first.",
+    "Create a workspace with optional rulesets, MCP servers, and workflows. Call list_enterprise_resources first. To also link a repo, pass connection_id + repo_path + branch (from list_vcs_connections / list_vcs_repos). IMPORTANT: check `repository_linked` in the result whenever you request a link — false means the workspace exists but the link failed (see repository_error). A `warning` means the repo linked but its delivery webhook couldn't be registered, so pushes will NOT trigger compliance until it's re-linked — surface both to the user, never report an unqualified success over them.",
   link_workspace_to_repo:
-    "Link a workspace to a GitHub repo for compliance evaluations on push.",
+    "Link a workspace to a repo (any provider) for compliance evaluations on push. IMPORTANT: a `warning` in the result means the repo linked but its delivery webhook couldn't be registered, so pushes will NOT trigger compliance until it's re-linked — surface it to the user, never report an unqualified success over it.",
   update_workspace_resources:
     "Add or remove rulesets, MCP servers, or workflows on a workspace. Required resources cannot be removed. Attaching a ruleset requires the caller's workspace.rulesets.manage permission — a caller without it gets a clean permission error, so it's safe to attempt. When you're the one suggesting a ruleset be attached (e.g. via list_workspace_rulesets), offer it to the user and let them confirm before calling this — don't attach it unprompted.",
 };
