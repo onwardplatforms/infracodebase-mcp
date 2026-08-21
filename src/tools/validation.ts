@@ -195,7 +195,15 @@ export const TOOL_SHAPES = {
           "(GitLab subgroups included, e.g. 'group/sub/project')."
       )
       .optional(),
-    branch: z.string().min(1).describe("Branch to clone (if linking, e.g. 'main').").optional(),
+    branch: z
+      .string()
+      .min(1)
+      .describe(
+        "Branch to link, e.g. 'main'. Must already exist on the remote — a freshly " +
+          "created, empty repo has no branches, so seed an initial commit and push it first " +
+          "or the link fails."
+      )
+      .optional(),
   },
 
   link_workspace_to_repo: {
@@ -211,7 +219,14 @@ export const TOOL_SHAPES = {
         "Full provider path of the repo, exactly as returned by list_vcs_repos " +
           "(GitLab subgroups included, e.g. 'group/sub/project')."
       ),
-    branch: z.string().min(1).describe("Branch to clone (e.g. 'main')."),
+    branch: z
+      .string()
+      .min(1)
+      .describe(
+        "Branch to link, e.g. 'main'. Must already exist on the remote — a freshly " +
+          "created, empty repo has no branches, so seed an initial commit and push it first " +
+          "or the link fails."
+      ),
     ...enterpriseHint,
   },
 
