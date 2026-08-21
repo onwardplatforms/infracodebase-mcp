@@ -112,12 +112,13 @@ export const TOOL_SHAPES = {
       .string()
       .min(1)
       .describe(
-        "Optional commit SHA or branch to evaluate — must already be pushed. " +
-          "Defaults to the latest pushed commit on the workspace's linked branch, not your " +
-          "local working tree. Prefer a branch name here (or omit it) over a bare commit SHA: " +
-          "pinning a SHA records the evaluation with no branch, which the product then shows as " +
-          "'branch unknown'. For a precise re-run, keep ref on the branch and narrow with " +
-          "rule_ids / ruleset_id instead."
+        "Commit SHA or branch to evaluate — must already be pushed to the remote. " +
+          "Pass the branch name you pushed (e.g. 'main'): that resolves the branch's current " +
+          "remote commit AND records the branch on the run. Do NOT omit this — omitting " +
+          "evaluates a cached snapshot of the workspace that can lag a fresh push, so the run " +
+          "may score stale code. Do NOT pin a bare commit SHA either — it evaluates the right " +
+          "commit but records no branch, which the product shows as 'branch unknown'. For a " +
+          "precise re-run, keep ref on the branch name and narrow with rule_ids / ruleset_id."
       )
       .optional(),
     ruleset_id: z
@@ -258,7 +259,7 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   get_compliance_evaluation:
     "Return the summary of a compliance evaluation for this workspace. With no ref, returns the latest evaluation, scoped to branch if given. The response includes a `url` to the evaluation's results page — share it with the user rather than just reporting the score inline.",
   trigger_compliance_evaluation:
-    "Trigger a compliance evaluation. IMPORTANT: this evaluates the code already pushed to the linked branch, not your local working tree — the platform has no visibility into uncommitted or unpushed local changes. Commit and push everything to the remote branch you're evaluating BEFORE calling this tool, or the run will silently score stale, previously-pushed code instead of what you just wrote. Run at most one full evaluation per task — after that, always scope with ruleset_id, rule_id, or rule_ids to re-check just the rules you fixed, not the whole workspace. Scope by those rule params, not by pinning ref to a commit SHA: leave ref on the branch (or omit it) so the run still records its branch — a SHA-pinned run records no branch and shows up as 'branch unknown' in the product. This call returns immediately with the queued/running evaluation — the evaluation itself is a long-running background operation, the same as a CI check on a pull request, and can take several minutes depending on rule count. Do not wait on it inline or poll get_compliance_evaluation in a tight loop; treat it like a background CI run — continue with other requested work and check back on it later. The response includes a `url` to the evaluation's results page — share it with the user so they can watch it progress and see the full results once it completes.",
+    "Trigger a compliance evaluation. IMPORTANT: this evaluates the code already pushed to the linked branch, not your local working tree — the platform has no visibility into uncommitted or unpushed local changes. Commit and push everything to the remote branch you're evaluating BEFORE calling this tool, or the run will silently score stale, previously-pushed code instead of what you just wrote. Run at most one full evaluation per task — after that, always scope with ruleset_id, rule_id, or rule_ids to re-check just the rules you fixed, not the whole workspace. Scope by those rule params, and pass ref as the branch name you pushed (e.g. 'main') — not omitted and not a bare SHA. The branch name resolves the branch's current remote commit and records the branch label; omitting ref can evaluate a stale cached snapshot, and a SHA-scoped run records no branch and shows up as 'branch unknown' in the product. This call returns immediately with the queued/running evaluation — the evaluation itself is a long-running background operation, the same as a CI check on a pull request, and can take several minutes depending on rule count. Do not wait on it inline or poll get_compliance_evaluation in a tight loop; treat it like a background CI run — continue with other requested work and check back on it later. The response includes a `url` to the evaluation's results page — share it with the user so they can watch it progress and see the full results once it completes.",
   list_compliance_findings:
     "Return the per-rule findings from a compliance evaluation. With no ref, uses the workspace's latest completed evaluation.",
   get_compliance_eval_spec:
