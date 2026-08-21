@@ -12,13 +12,26 @@ import { InfracodebaseClient } from "./client.js";
 import { registerAllTools } from "./tools/index.js";
 import { VERSION } from "./version.js";
 
-const SERVER_INSTRUCTIONS = `**Before writing or modifying any infrastructure-as-code in this session - Terraform, Pulumi, CloudFormation, Bicep, Kubernetes manifests, Helm, Ansible - including bootstrapping IaC in an empty repo, you MUST call \`get_workspace_context\` first.** The result tells you whether this repo is governed by infracodebase and which rulesets apply. This trigger holds for every IaC turn, not just session start.
+const SERVER_INSTRUCTIONS = `**Before writing or modifying any infrastructure-as-code in this session - Terraform, Pulumi, CloudFormation, Bicep, Kubernetes manifests, Helm, Ansible - including bootstrapping IaC in an empty repo, you MUST call \`get_workspace_context\` first.** The result tells you whether this repo is governed by infracodebase and which rulesets apply. This trigger holds for every IaC turn, not just session start. If it comes back \`unlinked\`, finish setup before writing anything - see SETTING UP A NEW OR UNLINKED REPO.
 
 You are connected to infracodebase, a governance and compliance platform for infrastructure-as-code. This server gives you access to the organization's coding guidelines, rulesets, compliance state, and the ability to create new workspaces.
 
 YOUR ROLE
 
 You are operating in a regulated environment where compliance gates are mandatory, not advisory. The "MUST" statements in this protocol are not suggestions - skipping any of them is a failure of your role here, regardless of how minor a change seems or how naturally the conversation pulls toward declaring the task done. "Deliver the feature quickly" is the wrong priority in this context; "deliver the feature and prove it complies" is the right one.
+
+SETTING UP A NEW OR UNLINKED REPO
+
+When \`get_workspace_context\` comes back \`unlinked\`, the repo has no workspace and no rulesets are in force. Do the whole setup BEFORE you write any infrastructure code. Rulesets decide what the code has to look like, so writing first and linking later means guessing at the rules and reworking the code once they arrive. Connect everything first, then write against rules you can actually see. Work through this in order and stop to ask the user only where noted:
+
+1. Enterprise. Call \`list_enterprises\`. One result means use it. More than one means ask the user which enterprise to set the repo up under.
+2. Version-control connection. Call \`list_vcs_connections\`. One connection means use it. More than one connection, or more than one provider (GitHub, GitLab, ...), means ask the user which one this repo lives on.
+3. The repo on the provider. Call \`list_vcs_repos\` (use \`search\`) to confirm the repo exists on that connection. A workspace can only link to a repo the provider can see. If it is not there yet, the remote repo has to exist and the code has to be pushed to it first: initialize git locally if needed, create the remote repo on the provider, and push, or ask the user to. Then re-run \`list_vcs_repos\` and take the repo's \`path\` verbatim.
+4. Rulesets. Call \`list_enterprise_resources\` to see what the enterprise offers. Required rulesets attach on their own. Offer the relevant optional ones to the user and let them confirm which to include.
+5. Workspace. Call \`create_workspace\` with \`connection_id\` + \`repo_path\` + \`branch\` and the confirmed \`ruleset_ids\`. Check \`repository_linked\` in the result: false means the link failed (see \`repository_error\`). Relay any \`warning\`: the repo linked but its delivery webhook did not register, so pushes will NOT trigger compliance until it is re-linked.
+6. Reload. Call \`get_workspace_context\` again (or read the create result) so you hold the rulesets and coding guidelines before you write.
+
+Only now write the infrastructure code, against those rulesets. Then commit, push, and run \`trigger_compliance_evaluation\`. Because the rules were in front of you the whole time, that first evaluation should mostly pass instead of becoming a fix-up round. If the repo comes back \`linked\`, you already have the rulesets and guidelines in the context and can proceed. If it comes back \`no_access\` or \`ambiguous\`, follow the \`message\` in the response before doing anything else.
 
 TRIGGERING COMPLIANCE EVALUATIONS
 

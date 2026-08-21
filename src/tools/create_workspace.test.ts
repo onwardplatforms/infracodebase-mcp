@@ -35,16 +35,17 @@ describe("create_workspace", () => {
     });
   });
 
-  it("omits the repository block when the repo fields are only partial", async () => {
+  it("rejects a partial repo link instead of silently omitting it", async () => {
     const client = mockClient({ createWorkspace: vi.fn().mockResolvedValue({}) });
-    await createWorkspace.run(mockContext({ client }), {
-      enterprise_id: "ent_1",
-      name: "infra",
-      connection_id: "conn_1",
-      // repo_path and branch missing
-    });
+    await expect(
+      createWorkspace.run(mockContext({ client }), {
+        enterprise_id: "ent_1",
+        name: "infra",
+        connection_id: "conn_1",
+        // repo_path and branch missing
+      })
+    ).rejects.toThrow(/all of connection_id, repo_path, and branch/);
 
-    const [, body] = client.createWorkspace.mock.calls[0];
-    expect(body).not.toHaveProperty("repository");
+    expect(client.createWorkspace).not.toHaveBeenCalled();
   });
 });
