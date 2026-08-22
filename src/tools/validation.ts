@@ -112,9 +112,13 @@ export const TOOL_SHAPES = {
       .string()
       .min(1)
       .describe(
-        "Optional commit SHA or branch to evaluate — must already be pushed to GitHub. " +
-          "Defaults to the latest pushed commit on the workspace's linked branch, not your " +
-          "local working tree."
+        "Commit SHA or branch to evaluate — must already be pushed to the remote. " +
+          "Pass the branch name you pushed (e.g. 'main'): that resolves the branch's current " +
+          "remote commit AND records the branch on the run. Do NOT omit this — omitting " +
+          "evaluates a cached snapshot of the workspace that can lag a fresh push, so the run " +
+          "may score stale code. Do NOT pin a bare commit SHA either — it evaluates the right " +
+          "commit but records no branch, which the product shows as 'branch unknown'. For a " +
+          "precise re-run, keep ref on the branch name and narrow with rule_ids / ruleset_id."
       )
       .optional(),
     ruleset_id: z
@@ -192,7 +196,15 @@ export const TOOL_SHAPES = {
           "(GitLab subgroups included, e.g. 'group/sub/project')."
       )
       .optional(),
-    branch: z.string().min(1).describe("Branch to clone (if linking, e.g. 'main').").optional(),
+    branch: z
+      .string()
+      .min(1)
+      .describe(
+        "Branch to link, e.g. 'main'. Must already exist on the remote — a freshly " +
+          "created, empty repo has no branches, so seed an initial commit and push it first " +
+          "or the link fails."
+      )
+      .optional(),
   },
 
   link_workspace_to_repo: {
@@ -208,7 +220,14 @@ export const TOOL_SHAPES = {
         "Full provider path of the repo, exactly as returned by list_vcs_repos " +
           "(GitLab subgroups included, e.g. 'group/sub/project')."
       ),
-    branch: z.string().min(1).describe("Branch to clone (e.g. 'main')."),
+    branch: z
+      .string()
+      .min(1)
+      .describe(
+        "Branch to link, e.g. 'main'. Must already exist on the remote — a freshly " +
+          "created, empty repo has no branches, so seed an initial commit and push it first " +
+          "or the link fails."
+      ),
     ...enterpriseHint,
   },
 
@@ -232,7 +251,7 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   list_workspaces:
     "List workspaces you have access to in an enterprise. Each workspace includes its linked repo if any. Use this to find workspace IDs. Defaults to STANDARD-kind workspaces only — pass kinds to include template and/or module workspaces too.",
   get_workspace_context:
-    "Get full workspace context. Returns workspace identity, applicable rulesets, coding guidelines, latest compliance state, and approved module catalog summary. Pass repo_url (from the repo's git remote) or workspace_id. Response `status` is one of: linked (context returned as above), unlinked (no workspace matches this repo — offer to create one or link an existing one), no_access (a workspace exists but you don't have permission to see it — don't imply it doesn't exist), or ambiguous (the repo matches workspaces in more than one enterprise — call again with an explicit workspace_id). Every non-linked status includes a message field with what to tell the user or do next.",
+    "Get full workspace context. Returns workspace identity, applicable rulesets, coding guidelines, latest compliance state, and approved module catalog summary. Pass repo_url (from the repo's git remote) or workspace_id. Response `status` is one of: linked (context returned as above), unlinked (no workspace matches this repo, so no rulesets are in force yet — run the full setup before writing any IaC: pick the enterprise and VCS connection, confirm the repo exists on the provider, then create_workspace with the right rulesets attached, and only then write code, so the rules are in hand up front instead of forcing rework; don't write IaC into an unlinked repo and link afterward), no_access (a workspace exists but you don't have permission to see it — don't imply it doesn't exist), or ambiguous (the repo matches workspaces in more than one enterprise — call again with an explicit workspace_id). Every non-linked status includes a message field with what to tell the user or do next.",
   get_ruleset_details:
     "Load the full text of every rule in a single ruleset. Returns rule id, title, full content, required flag, enabled flag, and order. Includes disabled rules (enabled: false) so you can see the whole catalog, not just what's currently active — filter on `enabled` if you only want the rules actually being evaluated.",
   list_workspace_rulesets:
@@ -240,7 +259,7 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   get_compliance_evaluation:
     "Return the summary of a compliance evaluation for this workspace. With no ref, returns the latest evaluation, scoped to branch if given. The response includes a `url` to the evaluation's results page — share it with the user rather than just reporting the score inline.",
   trigger_compliance_evaluation:
-    "Trigger a compliance evaluation. IMPORTANT: this evaluates the code already pushed to the linked GitHub branch, not your local working tree — the platform has no visibility into uncommitted or unpushed local changes. Commit and push everything to the remote branch you're evaluating BEFORE calling this tool, or the run will silently score stale, previously-pushed code instead of what you just wrote. Run at most one full evaluation per task — after that, always scope with ruleset_id, rule_id, or rule_ids to re-check just the rules you fixed, not the whole workspace. This call returns immediately with the queued/running evaluation — the evaluation itself is a long-running background operation, the same as a CI check on a pull request, and can take several minutes depending on rule count. Do not wait on it inline or poll get_compliance_evaluation in a tight loop; treat it like a background CI run — continue with other requested work and check back on it later. The response includes a `url` to the evaluation's results page — share it with the user so they can watch it progress and see the full results once it completes.",
+    "Trigger a compliance evaluation. IMPORTANT: this evaluates the code already pushed to the linked branch, not your local working tree — the platform has no visibility into uncommitted or unpushed local changes. Commit and push everything to the remote branch you're evaluating BEFORE calling this tool, or the run will silently score stale, previously-pushed code instead of what you just wrote. Run at most one full evaluation per task — after that, always scope with ruleset_id, rule_id, or rule_ids to re-check just the rules you fixed, not the whole workspace. Scope by those rule params, and pass ref as the branch name you pushed (e.g. 'main') — not omitted and not a bare SHA. The branch name resolves the branch's current remote commit and records the branch label; omitting ref can evaluate a stale cached snapshot, and a SHA-scoped run records no branch and shows up as 'branch unknown' in the product. Note: if the push you just made already kicked off a webhook evaluation for the same commit, a scoped trigger is adopted into that in-flight run instead of starting a new one — the response then carries `deduped: true` with `requested_scope` and `effective_scope`. That is not an error: a full run covers your scoped rules, so poll the returned evaluation rather than re-triggering, and tell the user the full run is standing in for the scoped one. This call returns immediately with the queued/running evaluation — the evaluation itself is a long-running background operation, the same as a CI check on a pull request, and can take several minutes depending on rule count. Do not wait on it inline or poll get_compliance_evaluation in a tight loop; treat it like a background CI run — continue with other requested work and check back on it later. The response includes a `url` to the evaluation's results page — share it with the user so they can watch it progress and see the full results once it completes.",
   list_compliance_findings:
     "Return the per-rule findings from a compliance evaluation. With no ref, uses the workspace's latest completed evaluation.",
   get_compliance_eval_spec:
@@ -254,7 +273,7 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   list_vcs_repos:
     "Return repositories accessible via a version-control connection — same shape for every provider. Each repo's `path` is the full provider path (GitLab subgroups included); pass it verbatim as repo_path when linking.",
   create_workspace:
-    "Create a workspace with optional rulesets, MCP servers, and workflows. Call list_enterprise_resources first. To also link a repo, pass connection_id + repo_path + branch (from list_vcs_connections / list_vcs_repos). IMPORTANT: check `repository_linked` in the result whenever you request a link — false means the workspace exists but the link failed (see repository_error). A `warning` means the repo linked but its delivery webhook couldn't be registered, so pushes will NOT trigger compliance until it's re-linked — surface both to the user, never report an unqualified success over them.",
+    "Create a workspace with optional rulesets, MCP servers, and workflows. Call list_enterprise_resources first. To also link a repo, pass connection_id + repo_path + branch (from list_vcs_connections / list_vcs_repos). A repo links to at most one workspace, so first confirm with list_workspaces that no workspace already owns this repo — if one does, attach rulesets to it with update_workspace_resources instead of creating a second workspace, since the link here would fail. This tool links an existing repo; it does not create one on the provider — the repo must already exist there (create it with the provider's CLI, e.g. gh or glab, if it doesn't). IMPORTANT: check `repository_linked` in the result whenever you request a link — false means the workspace exists but the link failed (see repository_error). A `warning` means the repo linked but its delivery webhook couldn't be registered, so pushes will NOT trigger compliance until it's re-linked — surface both to the user, never report an unqualified success over them.",
   link_workspace_to_repo:
     "Link a workspace to a repo (any provider) for compliance evaluations on push. IMPORTANT: a `warning` in the result means the repo linked but its delivery webhook couldn't be registered, so pushes will NOT trigger compliance until it's re-linked — surface it to the user, never report an unqualified success over it.",
   update_workspace_resources:
