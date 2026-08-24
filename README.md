@@ -136,7 +136,7 @@ The server reads its token and API URL from a command flag first, then an enviro
 
 - Missing or invalid token. The server needs `INFRACODEBASE_TOKEN` in its `env`. Generate one at [infracodebase.com/settings/tokens](https://infracodebase.com/settings/tokens).
 - TLS errors against a self-hosted instance. If your instance uses a private certificate authority, set `NODE_EXTRA_CA_CERTS` to the path of your root certificate.
-- `get_workspace_context` returns `unlinked`. No workspace matches the repo yet. Create one with `create_workspace`, or link an existing one with `link_workspace_to_repo`.
+- `get_workspace_context` returns `unlinked`. No workspace matches the repo yet, so no rulesets are in force. Set the repo up before writing any IaC: pick the enterprise and VCS connection, confirm the repo exists on the provider with `list_vcs_repos`, then `create_workspace` with the right rulesets attached (or `link_workspace_to_repo` for an existing workspace). Doing this first means you write against the rules instead of reworking the code once they attach.
 
 ## CLI
 
