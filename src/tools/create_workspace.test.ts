@@ -35,14 +35,32 @@ describe("create_workspace", () => {
     });
   });
 
-  it("rejects a partial repo link instead of silently omitting it", async () => {
+  // Every partial combination must reject — the guard is all-or-nothing and
+  // field-agnostic, so cover both the one-field and two-field cases to lock
+  // that in against a refactor to hard-coded per-field checks.
+  it.each([
+    { name: "connection_id only", repo: { connection_id: "conn_1" } },
+    { name: "repo_path only", repo: { repo_path: "acme/platform" } },
+    { name: "branch only", repo: { branch: "main" } },
+    {
+      name: "connection_id + repo_path, no branch",
+      repo: { connection_id: "conn_1", repo_path: "acme/platform" },
+    },
+    {
+      name: "connection_id + branch, no repo_path",
+      repo: { connection_id: "conn_1", branch: "main" },
+    },
+    {
+      name: "repo_path + branch, no connection_id",
+      repo: { repo_path: "acme/platform", branch: "main" },
+    },
+  ])("rejects a partial repo link ($name) instead of silently omitting it", async ({ repo }) => {
     const client = mockClient({ createWorkspace: vi.fn().mockResolvedValue({}) });
     await expect(
       createWorkspace.run(mockContext({ client }), {
         enterprise_id: "ent_1",
         name: "infra",
-        connection_id: "conn_1",
-        // repo_path and branch missing
+        ...repo,
       })
     ).rejects.toThrow(/all of connection_id, repo_path, and branch/);
 

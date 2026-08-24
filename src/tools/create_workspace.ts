@@ -18,6 +18,10 @@ export const createWorkspace: ToolDef = {
     // The repo link is all-or-nothing. Reject a partial set loudly rather than
     // silently creating an unlinked workspace and reporting success, which
     // would leave the repo ungoverned with no signal that anything was missed.
+    // `filter(Boolean)` is safe because the schema constrains each field to a
+    // non-empty string (validation.ts, .min(1)), so only omitted (undefined)
+    // fields are falsy here. The link decision below reuses `provided` so the
+    // guard and the link can never disagree.
     const repoFields = [a.connection_id, a.repo_path, a.branch];
     const provided = repoFields.filter(Boolean).length;
     if (provided > 0 && provided < repoFields.length) {
@@ -27,7 +31,7 @@ export const createWorkspace: ToolDef = {
       );
     }
 
-    if (a.connection_id && a.repo_path && a.branch) {
+    if (provided === repoFields.length) {
       body.repository = {
         connection_id: a.connection_id,
         path: a.repo_path,
