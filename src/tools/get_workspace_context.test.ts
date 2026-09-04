@@ -3,7 +3,7 @@ import { getWorkspaceContext } from "./get_workspace_context.js";
 import { mockClient, mockContext } from "../test-helpers.js";
 
 describe("get_workspace_context", () => {
-  it("resolves by workspace_id via a single client call", async () => {
+  it("resolves by workspace_id via a single client call, without touching repo detection", async () => {
     const client = mockClient({
       resolveWorkspaceContext: vi.fn().mockResolvedValue({ status: "linked" }),
     });
@@ -16,6 +16,7 @@ describe("get_workspace_context", () => {
       workspaceId: "ws_1",
       iacTool: "terraform",
     });
+    expect(ctx.resolveRepoUrl).not.toHaveBeenCalled();
   });
 
   it("resolves by repo_url via the same single client call", async () => {
@@ -67,13 +68,39 @@ describe("get_workspace_context", () => {
     }
   );
 
-  it("throws when neither workspace_id nor repo_url is provided", async () => {
+  it("auto-detects the repo when called with no arguments and says where it came from", async () => {
+    const client = mockClient({
+      resolveWorkspaceContext: vi.fn().mockResolvedValue({ status: "unlinked", owner: "acme", name: "infra" }),
+    });
+    const ctx = mockContext({
+      client,
+      resolveRepoUrl: vi.fn(async () => ({
+        repo_url: "https://github.com/acme/infra.git",
+        resolved_from: "cwd" as const,
+      })),
+    });
+
+    const result = await getWorkspaceContext.run(ctx, {});
+
+    expect(client.resolveWorkspaceContext).toHaveBeenCalledWith({
+      repoUrl: "https://github.com/acme/infra.git",
+      workspaceId: undefined,
+      iacTool: undefined,
+    });
+    expect(result).toEqual({
+      status: "unlinked",
+      owner: "acme",
+      name: "infra",
+      resolved_repo_url: "https://github.com/acme/infra.git",
+      resolved_from: "cwd",
+    });
+  });
+
+  it("surfaces the detector's error when no repo can be found and nothing was passed", async () => {
     const client = mockClient({ resolveWorkspaceContext: vi.fn() });
     const ctx = mockContext({ client });
 
-    await expect(getWorkspaceContext.run(ctx, {})).rejects.toThrow(
-      /Provide either workspace_id or repo_url/
-    );
+    await expect(getWorkspaceContext.run(ctx, {})).rejects.toThrow(/Could not detect a git remote/);
     expect(client.resolveWorkspaceContext).not.toHaveBeenCalled();
   });
 });

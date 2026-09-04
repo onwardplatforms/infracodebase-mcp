@@ -1,22 +1,24 @@
 /**
- * Tool input schemas (as Zod raw shapes) and shared parsing helpers.
+ * Tool input schemas (as Zod raw shapes), descriptions, and annotations.
  *
  * McpServer.registerTool takes a raw shape, auto-generates the JSON Schema shown
  * to clients, and validates arguments before the handler runs - so these shapes
  * are the single source of truth for both validation and the tools/list output.
+ *
+ * Descriptions are budgeted (see DESCRIPTION_BUDGET): clients truncate what the
+ * model sees, so anything the agent must act on belongs in the tool's response
+ * (`message`, `next`, `decisions_needed`), not at the end of a long description.
  */
 
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
-const IAC_TOOLS = [
-  "terraform",
-  "pulumi",
-  "cloudformation",
-  "bicep",
-  "kubernetes",
-  "helm",
-  "ansible",
-] as const;
+/**
+ * Mirrors the API's `iac_tool` enum exactly. Helm is deliberately absent: the
+ * API rejects it (HTTP 400), and Helm charts fall under the kubernetes
+ * guidelines.
+ */
+const IAC_TOOLS = ["terraform", "pulumi", "cloudformation", "bicep", "kubernetes", "ansible"] as const;
 
 const COMPLIANCE_STATUSES = [
   "pass",
@@ -28,7 +30,19 @@ const COMPLIANCE_STATUSES = [
 
 const WORKSPACE_KINDS = ["STANDARD", "TEMPLATE", "MODULE"] as const;
 
+/**
+ * Longest description a client is known to show in full. Claude Code cuts tool
+ * descriptions at 2,048 characters; the old trigger_compliance_evaluation text
+ * was 2,996 and lost its whole "share the url, do not poll" block.
+ */
+export const DESCRIPTION_BUDGET = 1900;
+
 const idList = (desc: string) => z.array(z.string().min(1)).describe(desc).optional();
+
+const iacTool = z
+  .enum(IAC_TOOLS)
+  .describe("Optional IaC tool to include tool-specific coding guidelines for.")
+  .optional();
 
 // Optional enterprise_id hint, shared by every workspace-scoped tool to skip the
 // automatic workspace→enterprise lookup scan.
@@ -39,6 +53,24 @@ const enterpriseHint = {
     .describe("Optional. The workspace's enterprise ID; provide it to skip the automatic lookup.")
     .optional(),
 };
+
+const repoPath = (suffix: string) =>
+  z
+    .string()
+    .min(1)
+    .describe(
+      `Full provider path of the repo${suffix}, exactly as returned by list_vcs_repos ` +
+        "(GitLab subgroups included, e.g. 'group/sub/project')."
+    );
+
+const branchToLink = z
+  .string()
+  .min(1)
+  .describe(
+    "Branch to link, e.g. 'main'. Must already exist on the remote — a freshly " +
+      "created, empty repo has no branches, so seed an initial commit and push it first " +
+      "or the link fails."
+  );
 
 export const TOOL_SHAPES = {
   list_enterprises: {},
@@ -60,19 +92,18 @@ export const TOOL_SHAPES = {
     workspace_id: z
       .string()
       .min(1)
-      .describe("Workspace ID. Provide this or repo_url. Get IDs from list_workspaces.")
+      .describe("Workspace ID, if already known (from list_workspaces or a setup result).")
       .optional(),
     repo_url: z
       .string()
       .min(1)
       .describe(
-        "Git remote URL of the repo (e.g. https://github.com/owner/name or owner/name). Provide this or workspace_id."
+        "Git remote URL of the repo (e.g. https://github.com/owner/name or owner/name). " +
+          "Omit both this and workspace_id to auto-detect the repo from the client's workspace " +
+          "root or the server's working directory."
       )
       .optional(),
-    iac_tool: z
-      .enum(IAC_TOOLS)
-      .describe("Optional IaC tool to include tool-specific coding guidelines for.")
-      .optional(),
+    iac_tool: iacTool,
   },
 
   get_ruleset_details: {
@@ -112,14 +143,10 @@ export const TOOL_SHAPES = {
       .string()
       .min(1)
       .describe(
-        "Commit SHA, branch, or tag to evaluate — must already be pushed to the remote. " +
-          "Pass the branch name you pushed (e.g. 'main'): that resolves the branch's current " +
-          "remote commit AND records the branch on the run. Do NOT omit this — omitting " +
-          "evaluates the workspace's current interactive checkout (uncommitted changes committed " +
-          "first), which can lag a fresh push, so the run may score stale code. Do NOT pin a bare " +
-          "commit SHA either — it evaluates the right commit but records no branch, which the " +
-          "product shows as 'branch unknown'. For a precise re-run, keep ref on the branch name " +
-          "and narrow with rule_ids / ruleset_id."
+        "The branch name you just pushed (e.g. 'main'). Resolves that branch's current remote " +
+          "commit and records the branch on the run. Do not omit it (that evaluates the " +
+          "workspace's interactive checkout, which can lag a fresh push) and do not pass a bare " +
+          "commit SHA (it records no branch, shown as 'branch unknown' in the product)."
       )
       .optional(),
     ruleset_id: z
@@ -174,7 +201,61 @@ export const TOOL_SHAPES = {
   list_vcs_repos: {
     enterprise_id: z.string().min(1).describe("Enterprise ID."),
     connection_id: z.string().min(1).describe("Connection ID from list_vcs_connections."),
-    search: z.string().describe("Optional search query to filter repos.").optional(),
+    search: z.string().describe("Optional search query to filter repos by name.").optional(),
+  },
+
+  plan_workspace_setup: {
+    repo_url: z
+      .string()
+      .min(1)
+      .describe(
+        "Git remote URL or owner/name of the repo to set up. Omit to auto-detect it from the " +
+          "client's workspace root or the server's working directory."
+      )
+      .optional(),
+    enterprise_id: z
+      .string()
+      .min(1)
+      .describe("Optional. Only consider this enterprise (use after a needs_decision result).")
+      .optional(),
+    connection_id: z
+      .string()
+      .min(1)
+      .describe(
+        "Optional. Only consider this version-control connection (use after a needs_decision result)."
+      )
+      .optional(),
+  },
+
+  setup_workspace: {
+    enterprise_id: z.string().min(1).describe("Enterprise ID from the plan."),
+    connection_id: z.string().min(1).describe("Version-control connection ID from the plan."),
+    repo_path: repoPath(" from the plan (repo.path)"),
+    branch: z
+      .string()
+      .min(1)
+      .describe(
+        "Branch to link: the plan's repo.default_branch unless the user chose another. " +
+          "Must already exist on the remote."
+      ),
+    workspace_name: z
+      .string()
+      .min(1)
+      .describe("Name for the new workspace. Required unless existing_workspace_id is given.")
+      .optional(),
+    description: z.string().describe("Optional description for a new workspace.").optional(),
+    ruleset_ids: idList(
+      "Ruleset IDs to attach: the plan's required ids plus any optional ones the user chose."
+    ),
+    existing_workspace_id: z
+      .string()
+      .min(1)
+      .describe(
+        "Link the repo to this existing unlinked workspace (from the plan's " +
+          "existing_unlinked_workspaces) instead of creating a new one."
+      )
+      .optional(),
+    iac_tool: iacTool,
   },
 
   create_workspace: {
@@ -189,23 +270,8 @@ export const TOOL_SHAPES = {
       .min(1)
       .describe("Version-control connection ID from list_vcs_connections (if linking a repo).")
       .optional(),
-    repo_path: z
-      .string()
-      .min(1)
-      .describe(
-        "Full provider path of the repo to link, exactly as returned by list_vcs_repos " +
-          "(GitLab subgroups included, e.g. 'group/sub/project')."
-      )
-      .optional(),
-    branch: z
-      .string()
-      .min(1)
-      .describe(
-        "Branch to link, e.g. 'main'. Must already exist on the remote — a freshly " +
-          "created, empty repo has no branches, so seed an initial commit and push it first " +
-          "or the link fails."
-      )
-      .optional(),
+    repo_path: repoPath(" to link").optional(),
+    branch: branchToLink.optional(),
   },
 
   link_workspace_to_repo: {
@@ -214,21 +280,8 @@ export const TOOL_SHAPES = {
       .string()
       .min(1)
       .describe("Version-control connection ID from list_vcs_connections."),
-    repo_path: z
-      .string()
-      .min(1)
-      .describe(
-        "Full provider path of the repo, exactly as returned by list_vcs_repos " +
-          "(GitLab subgroups included, e.g. 'group/sub/project')."
-      ),
-    branch: z
-      .string()
-      .min(1)
-      .describe(
-        "Branch to link, e.g. 'main'. Must already exist on the remote — a freshly " +
-          "created, empty repo has no branches, so seed an initial commit and push it first " +
-          "or the link fails."
-      ),
+    repo_path: repoPath(""),
+    branch: branchToLink,
     ...enterpriseHint,
   },
 
@@ -252,15 +305,15 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   list_workspaces:
     "List workspaces you have access to in an enterprise. Each workspace includes its linked repo if any. Use this to find workspace IDs. Defaults to STANDARD-kind workspaces only — pass kinds to include template and/or module workspaces too.",
   get_workspace_context:
-    "Get full workspace context. Returns workspace identity, applicable rulesets, coding guidelines, latest compliance state, and approved module catalog summary. Pass repo_url (from the repo's git remote) or workspace_id. Response `status` is one of: linked (context returned as above), unlinked (no workspace matches this repo, so no rulesets are in force yet — run the full setup before writing any IaC: pick the enterprise and VCS connection, confirm the repo exists on the provider, then create_workspace with the right rulesets attached, and only then write code, so the rules are in hand up front instead of forcing rework; don't write IaC into an unlinked repo and link afterward), no_access (a workspace exists but you don't have permission to see it — don't imply it doesn't exist), or ambiguous (the repo matches workspaces in more than one enterprise — call again with an explicit workspace_id). Every non-linked status includes a message field with what to tell the user or do next.",
+    "Start here before writing or changing any IaC. Returns workspace identity, applicable rulesets, coding guidelines, latest compliance state, and a module catalog summary. Call it with no arguments to auto-detect the repo from the client's workspace root or the server's working directory (the result then carries resolved_repo_url and resolved_from), or pass repo_url (the git remote) or workspace_id. `status` is one of: linked (context returned), unlinked (no workspace governs this repo, so no rules are in force: do not write IaC yet; follow `message`, then call plan_workspace_setup), no_access (a workspace exists but you cannot see it; do not imply it is missing), or ambiguous (the repo matches workspaces in several enterprises; pick from `candidates` and call again with workspace_id). Every non-linked status includes a `message` saying what to do next.",
   get_ruleset_details:
     "Load the full text of every rule in a single ruleset. Returns rule id, title, full content, required flag, enabled flag, and order. Includes disabled rules (enabled: false) so you can see the whole catalog, not just what's currently active — filter on `enabled` if you only want the rules actually being evaluated.",
   list_workspace_rulesets:
     "List every ruleset relevant to a workspace — including enterprise rulesets that exist in the catalog but this workspace hasn't opted into. Each row has `effective_enabled` (is it actually active here) and `workspace_setting` (the workspace's stored opinion, null if it's never opted in/out). Use this when you notice code introducing a resource type or concern that isn't covered by any currently-active ruleset, to check whether a relevant one already exists but just isn't attached — then offer to attach it via update_workspace_resources rather than assuming none exists. Only enterprise rulesets that are enabled and not required can be attached this way; required ones are already active regardless.",
   get_compliance_evaluation:
-    "Return the summary of a compliance evaluation for this workspace. With no ref, returns the latest evaluation, scoped to branch if given. Call this once to check the current state — do not call it repeatedly in a loop to wait for a running evaluation to finish; point the user at the `url` to watch progress instead. The response includes a `url` to the evaluation's results page — share it with the user rather than just reporting the score inline.",
+    "Return the summary of a compliance evaluation for this workspace. With no ref, returns the latest evaluation, scoped to branch if given. Call it once to check the current state; a still-running evaluation comes back with a `next` field, and you should never call this in a loop to wait for it. The response includes a `url` to the results page — share it with the user rather than only reporting the score inline.",
   trigger_compliance_evaluation:
-    "Trigger a compliance evaluation. IMPORTANT: this evaluates the code already pushed to the linked branch, not your local working tree — the platform has no visibility into uncommitted or unpushed local changes. Commit and push everything to the remote branch you're evaluating BEFORE calling this tool, or the run will silently score stale, previously-pushed code instead of what you just wrote. Prefer scoped runs, and often you need no manual full run at all: a push auto-runs a FULL evaluation (all rules) whenever CI compliance is enabled and you pushed to the default branch OR to a branch that has an open pull/merge request — the same CI check a PR shows. So after pushing, check once with get_compliance_evaluation whether a run already started for your commit; if one did, let it be the full run and use a scoped trigger (ruleset_id, rule_id, or rule_ids) only to re-verify the specific rules you fixed. Trigger a full evaluation yourself only when no auto-run applies (a non-default branch with no open PR, or CI compliance turned off) — at most one full run per task. When you do trigger, pass ref as the branch name you pushed (e.g. 'main') — not omitted and not a bare SHA. The branch name resolves the branch's current remote commit and records the branch label; omitting ref evaluates the workspace's current interactive checkout, which can lag a fresh push, and a SHA-scoped run records no branch and shows up as 'branch unknown' in the product. Note: if a push already kicked off a full webhook evaluation for the same commit, your scoped trigger may be adopted into that already-running full run rather than starting a new one. When that happens the response carries `deduped: true`, plus `requested_scope` (what you asked for) and `effective_scope` (what actually ran, e.g. 'full') — a fresh run omits all three. That is not an error: a full run already covers your scoped rules, so check the returned evaluation once (or when the user asks) rather than re-triggering, and tell the user the full run is standing in for the scoped one. This call returns immediately with the queued/running evaluation — the evaluation itself is a long-running background operation, the same as a CI check on a pull request. Once it returns, share the `url` with the user and STOP: the run completes on its own. Do NOT sleep, run wait-loops, or call get_compliance_evaluation over and over to watch it finish — that does not background the work, it just blocks the session. Do any other work the user asked for; otherwise end your turn. Check the result at most once later, or when the user asks — never on a timer and never in a loop. Do NOT report an elapsed time or an ETA: you have no reliable clock for these runs and they are not on a predictable schedule, so any time figure you give will be wrong. If the user asks how it is going, call get_compliance_evaluation once and report only the status and the pass/fail/na counts from the response, then point them at the `url` to watch the rest.",
+    "Start a compliance evaluation of the code already pushed to the linked branch. The platform never sees your local tree: commit and push first, or the run scores stale code while the result looks valid. Pass ref as the branch name you pushed (e.g. 'main'); never omit it (that evaluates a possibly stale checkout) and never pass a bare SHA (it records no branch). Often no manual full run is needed: with CI compliance enabled, a push to the default branch or to a branch with an open pull request auto-runs a full evaluation. After pushing, call get_compliance_evaluation once; if a run for your commit already exists, trigger only a scoped re-check (rule_ids, rule_id, or ruleset_id) for the rules you fixed. Trigger a full run yourself only when no auto-run applies, at most once per task. If the server folds your scoped request into an already-running full run, the response has deduped: true with requested_scope and effective_scope; that is not an error. The call returns immediately with the queued run, a results `url`, and a `next` field telling you what to do: share the url with the user and stop. Never poll, sleep, or estimate how long it will take.",
   list_compliance_findings:
     "Return the per-rule findings from a compliance evaluation. With no ref, uses the workspace's latest completed evaluation.",
   get_compliance_eval_spec:
@@ -273,10 +326,72 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
     "Return the version-control connections (GitHub, GitLab, …) configured for an enterprise, each with its provider, host, and account. Use a connection's id with list_vcs_repos and when linking a repo.",
   list_vcs_repos:
     "Return repositories accessible via a version-control connection — same shape for every provider. Each repo's `path` is the full provider path (GitLab subgroups included); pass it verbatim as repo_path when linking.",
+  plan_workspace_setup:
+    "Read-only. Works out everything needed to bring an unlinked repo under governance in one call: resolves the repo (auto-detected when repo_url is omitted), finds the enterprise and version-control connection that can see it, checks for a workspace that already owns it, lists unlinked workspaces the repo could join, and lists the enterprise's rulesets with the required ones pre-selected. Makes no changes. `status` is ready (a `proposed` plan plus `decisions_needed`), needs_decision (several enterprises or connections can see the repo: ask the user, then call again with enterprise_id and connection_id), repo_not_found (no connection can see the repo: it may not exist yet, or the connection lacks access), or already_linked. Show the user the plan and get their answer to each decision before calling setup_workspace.",
+  setup_workspace:
+    "Apply a plan from plan_workspace_setup after the user has confirmed it. Either creates a workspace (workspace_name + ruleset_ids) linked to the repo, or links the repo to an existing unlinked workspace (existing_workspace_id) and attaches ruleset_ids to it, then reloads the workspace context so you can write against the rules immediately. Check the result: repository_linked false means the workspace exists but the link failed (see repository_error); a `warning` means the link succeeded but the delivery webhook did not register, so pushes will NOT trigger compliance until the repo is re-linked. Relay both to the user; never report an unqualified success over them. Do not call this until the user has confirmed the plan.",
   create_workspace:
-    "Create a workspace with optional rulesets, MCP servers, and workflows. Call list_enterprise_resources first. To also link a repo, pass connection_id + repo_path + branch (from list_vcs_connections / list_vcs_repos). A repo links to at most one workspace, so first confirm with list_workspaces that no workspace already owns this repo — if one does, attach rulesets to it with update_workspace_resources instead of creating a second workspace, since the link here would fail. This tool links an existing repo; it does not create one on the provider — the repo must already exist there (create it with the provider's CLI, e.g. gh or glab, if it doesn't). IMPORTANT: check `repository_linked` in the result whenever you request a link — false means the workspace exists but the link failed (see repository_error). A `warning` means the repo linked but its delivery webhook couldn't be registered, so pushes will NOT trigger compliance until it's re-linked — surface both to the user, never report an unqualified success over them.",
+    "Create a workspace with optional rulesets, MCP servers, and workflows. For a repo that came back unlinked, prefer plan_workspace_setup + setup_workspace, which do the lookups below for you. Call list_enterprise_resources first. To also link a repo, pass connection_id + repo_path + branch (from list_vcs_connections / list_vcs_repos). A repo links to at most one workspace, so first confirm with list_workspaces that no workspace already owns this repo — if one does, attach rulesets to it with update_workspace_resources instead of creating a second workspace, since the link here would fail. This tool links an existing repo; it does not create one on the provider — the repo must already exist there (create it with the provider's CLI, e.g. gh or glab, if it doesn't). IMPORTANT: check `repository_linked` in the result whenever you request a link — false means the workspace exists but the link failed (see repository_error). A `warning` means the repo linked but its delivery webhook couldn't be registered, so pushes will NOT trigger compliance until it's re-linked — surface both to the user, never report an unqualified success over them.",
   link_workspace_to_repo:
     "Link a workspace to a repo (any provider) for compliance evaluations on push. IMPORTANT: a `warning` in the result means the repo linked but its delivery webhook couldn't be registered, so pushes will NOT trigger compliance until it's re-linked — surface it to the user, never report an unqualified success over it.",
   update_workspace_resources:
     "Add or remove rulesets, MCP servers, or workflows on a workspace. Required resources cannot be removed. Attaching a ruleset requires the caller's workspace.rulesets.manage permission — a caller without it gets a clean permission error, so it's safe to attempt. When you're the one suggesting a ruleset be attached (e.g. via list_workspace_rulesets), offer it to the user and let them confirm before calling this — don't attach it unprompted.",
+};
+
+/**
+ * MCP tool annotations. Clients use them to badge read-only tools, to skip
+ * permission prompts for them, and to warn before destructive ones; they cost
+ * nothing where unsupported. `openWorldHint` is false throughout: every tool
+ * talks to one known API, not the open internet.
+ */
+const readOnly = (title: string): ToolAnnotations => ({
+  title,
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+});
+
+const writes = (
+  title: string,
+  opts: { destructive: boolean; idempotent: boolean }
+): ToolAnnotations => ({
+  title,
+  readOnlyHint: false,
+  destructiveHint: opts.destructive,
+  idempotentHint: opts.idempotent,
+  openWorldHint: false,
+});
+
+export const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
+  list_enterprises: readOnly("List enterprises"),
+  list_workspaces: readOnly("List workspaces"),
+  get_workspace_context: readOnly("Get workspace context"),
+  get_ruleset_details: readOnly("Get ruleset details"),
+  list_workspace_rulesets: readOnly("List workspace rulesets"),
+  get_compliance_evaluation: readOnly("Get compliance evaluation"),
+  list_compliance_findings: readOnly("List compliance findings"),
+  get_compliance_eval_spec: readOnly("Get compliance evaluator spec"),
+  list_enterprise_resources: readOnly("List enterprise resources"),
+  list_modules: readOnly("List approved modules"),
+  list_vcs_connections: readOnly("List version-control connections"),
+  list_vcs_repos: readOnly("List repositories"),
+  plan_workspace_setup: readOnly("Plan workspace setup"),
+  // Creates records but never removes or replaces any.
+  trigger_compliance_evaluation: writes("Trigger compliance evaluation", {
+    destructive: false,
+    idempotent: false,
+  }),
+  create_workspace: writes("Create workspace", { destructive: false, idempotent: false }),
+  setup_workspace: writes("Set up workspace", { destructive: false, idempotent: false }),
+  // Replaces an existing repo link.
+  link_workspace_to_repo: writes("Link workspace to repository", {
+    destructive: true,
+    idempotent: true,
+  }),
+  // Can detach resources.
+  update_workspace_resources: writes("Update workspace resources", {
+    destructive: true,
+    idempotent: true,
+  }),
 };

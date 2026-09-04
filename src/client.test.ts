@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { readFileSync } from "fs";
-import { InfracodebaseClient, ApiError } from "./client.js";
+import { InfracodebaseClient, ApiError, formatApiError } from "./client.js";
 
 /**
  * These tests exercise the one piece of real logic that touches the actual
@@ -284,18 +284,31 @@ describe("InfracodebaseClient — query/path building", () => {
 });
 
 describe("InfracodebaseClient — verifyToken", () => {
-  it("returns the enterprises array on success", async () => {
-    stubFetch(jsonResponse({ data: [{ id: "ent_1", name: "Acme" }] }));
+  it("returns the caller's identity from /me", async () => {
+    const fetchMock = stubFetch(
+      jsonResponse({ id: "user_1", email: "ada@acme.com", name: "Ada", enterprises: [{ id: "ent_1" }] })
+    );
     const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
 
-    expect(await client.verifyToken()).toEqual([{ id: "ent_1", name: "Acme" }]);
+    expect(await client.verifyToken()).toEqual({
+      id: "user_1",
+      email: "ada@acme.com",
+      name: "Ada",
+      enterprises: [{ id: "ent_1" }],
+    });
+    expect(lastCall(fetchMock).url).toBe("https://api.example.com/me");
   });
 
-  it("falls back to an empty array when the response omits data", async () => {
-    stubFetch(jsonResponse({}));
+  it("falls back to the enterprise list on an instance that predates /me", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("not found", { status: 404 }))
+      .mockResolvedValueOnce(jsonResponse({ data: [{ id: "ent_1", name: "Acme" }] }));
+    vi.stubGlobal("fetch", fetchMock);
     const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
 
-    expect(await client.verifyToken()).toEqual([]);
+    expect(await client.verifyToken()).toEqual({ enterprises: [{ id: "ent_1", name: "Acme" }] });
+    expect(fetchMock.mock.calls[1][0]).toBe("https://api.example.com/enterprises");
   });
 
   it("propagates an ApiError on an invalid token (401)", async () => {
@@ -303,5 +316,79 @@ describe("InfracodebaseClient — verifyToken", () => {
     const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "bad" });
 
     await expect(client.verifyToken()).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+/**
+ * The API returns a documented error envelope whose `message` is marked safe
+ * to surface. The agent should read that sentence, not a URL and a JSON blob.
+ */
+describe("ApiError — message formatting", () => {
+  const envelope = (extra: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      type: "not_found_error",
+      code: "ruleset_not_found",
+      message: "Ruleset not found in this enterprise.",
+      request_id: "req_1",
+      ...extra,
+    });
+
+  it("leads with the API's message and code and drops the URL for a JSON error body", () => {
+    const text = formatApiError(404, envelope(), "/enterprises/e/rulesets/r", "https://api.example.com");
+
+    expect(text).toBe("Ruleset not found in this enterprise. [ruleset_not_found, HTTP 404, request req_1]");
+    expect(text).not.toContain("https://");
+  });
+
+  it("names the offending param when the API gives one", () => {
+    const text = formatApiError(
+      400,
+      envelope({ code: "invalid_request", message: "Invalid option", param: "iac_tool" }),
+      "/workspace-context",
+      "https://api.example.com"
+    );
+
+    expect(text).toContain("Invalid option (param: iac_tool)");
+  });
+
+  it("adds a token hint on 401 that points at this instance's tokens page", () => {
+    const text = formatApiError(
+      401,
+      envelope({ type: "authentication_error", code: "unauthorized", message: "Invalid token." }),
+      "/me",
+      "https://infra.acme.com/api/v1"
+    );
+
+    expect(text).toContain("INFRACODEBASE_TOKEN");
+    expect(text).toContain("https://infra.acme.com/settings/tokens");
+  });
+
+  it("explains a read-only token on a 403 scope error", () => {
+    const text = formatApiError(
+      403,
+      envelope({ type: "permission_error", code: "insufficient_scope", message: "Insufficient scope: requires 'execute'" }),
+      "/enterprises/e/workspaces",
+      "https://api.example.com"
+    );
+
+    expect(text).toContain("This token is read-only");
+    expect(text).toContain('"Read and write" token');
+  });
+
+  it("keeps the URL and truncates the body when the response is not JSON", () => {
+    const html = "<html>" + "x".repeat(2000);
+    const text = formatApiError(502, html, "/enterprises", "https://wrong.example.com/api/v1");
+
+    expect(text).toContain("API request failed: 502 https://wrong.example.com/api/v1/enterprises");
+    expect(text.length).toBeLessThan(800);
+    expect(text.endsWith("…")).toBe(true);
+  });
+
+  it("exposes code and requestId on the error object for callers that branch on them", () => {
+    const err = new ApiError(404, envelope(), "/x", "https://api.example.com");
+
+    expect(err.code).toBe("ruleset_not_found");
+    expect(err.requestId).toBe("req_1");
+    expect(err.status).toBe(404);
   });
 });

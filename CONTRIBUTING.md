@@ -31,18 +31,20 @@ src/
 ├── index.ts            CLI entry point (default = run server, flag parsing)
 ├── server.ts           MCP server setup + stdio transport
 ├── config.ts           token/URL resolution from flags + env (no stored file)
-├── client.ts           REST API client (auth, ApiError)
+├── client.ts           REST API client (auth, ApiError formatting)
+├── instructions.ts     server instructions (budgeted; instructions.test.ts enforces it)
+├── repo-detect.ts      repo auto-detection: argument, then client roots, then cwd git remote
 ├── cli/
 │   └── usage.ts        `help` / usage text
 └── tools/
     ├── index.ts            Self-documenting TOOLS[] registry + registerAllTools
     ├── helpers.ts          ToolContext, the registerTool wrapper, shared resolution
-    ├── validation.ts       Zod arg schemas, descriptions (single source of truth per tool)
+    ├── validation.ts       Zod arg schemas, descriptions, annotations (single source of truth per tool)
     └── <tool_name>.ts       One file per MCP tool (e.g. get_workspace_context.ts)
 ```
 
 Each tool lives in its own file and exports a `ToolDef`. To add a tool: create
-`src/tools/<name>.ts`, add its schema + description to `validation.ts`, and add
+`src/tools/<name>.ts`, add its schema, description, and annotations to `validation.ts`, and add
 its export to the `TOOLS` array in `index.ts`. A colocated
 `src/tools/<name>.test.ts` covers it.
 

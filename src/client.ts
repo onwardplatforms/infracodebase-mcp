@@ -11,6 +11,14 @@ export interface ClientConfig {
   token: string;
 }
 
+/** Shape of GET /me. Older self-hosted instances may lack the endpoint. */
+export interface Identity {
+  id?: string;
+  email?: string;
+  name?: string | null;
+  enterprises: Array<{ id?: string; name?: string; slug?: string }>;
+}
+
 export class InfracodebaseClient {
   private baseUrl: string;
   private token: string;
@@ -52,6 +60,32 @@ export class InfracodebaseClient {
   }
 
   // ---------------------------------------------------------------------------
+  // Identity
+  // ---------------------------------------------------------------------------
+
+  async getMe() {
+    return this.request<Identity>("GET", "/me");
+  }
+
+  /**
+   * Verify the token works and learn who it belongs to, so the startup log can
+   * say "connected as ada@acme.com (2 enterprises)" instead of just "Ready".
+   * Falls back to the enterprise list on instances that predate /me. Throws
+   * ApiError (401/403/...) on an invalid or expired token.
+   */
+  async verifyToken(): Promise<Identity> {
+    try {
+      return await this.getMe();
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 404 || err.status === 501)) {
+        const res = await this.listEnterprises();
+        return { enterprises: (res.data as Identity["enterprises"]) ?? [] };
+      }
+      throw err;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Workspace operations
   // ---------------------------------------------------------------------------
 
@@ -78,16 +112,6 @@ export class InfracodebaseClient {
 
   async listEnterprises() {
     return this.request<{ data: Array<unknown> }>("GET", "/enterprises");
-  }
-
-  /**
-   * Verify the token works by hitting an authenticated endpoint.
-   * Returns the caller's enterprises so the CLI can confirm who they are.
-   * Throws ApiError (401/403/...) on an invalid or expired token.
-   */
-  async verifyToken(): Promise<Array<{ id?: string; name?: string }>> {
-    const res = await this.listEnterprises();
-    return (res.data as Array<{ id?: string; name?: string }>) ?? [];
   }
 
   async listWorkspaces(enterpriseId: string, kinds?: string[]) {
@@ -285,15 +309,94 @@ export class InfracodebaseClient {
   }
 }
 
+// -----------------------------------------------------------------------------
+// Errors
+// -----------------------------------------------------------------------------
+
+/** The documented v1 error envelope (lib/api/v1/primitives.ts ErrorResponse). */
+interface ApiErrorBody {
+  type?: string;
+  code?: string;
+  message?: string;
+  param?: string;
+  request_id?: string;
+}
+
+const MAX_RAW_BODY = 600;
+
+function parseErrorBody(body: string): ApiErrorBody | null {
+  try {
+    const parsed = JSON.parse(body) as unknown;
+    if (parsed && typeof parsed === "object" && typeof (parsed as ApiErrorBody).message === "string") {
+      return parsed as ApiErrorBody;
+    }
+  } catch {
+    // Not JSON: a proxy page, an HTML 404 from a wrong API URL, or plain text.
+  }
+  return null;
+}
+
+/** Where to mint a token on this instance (self-hosted users get their own host). */
+function tokensUrl(baseUrl: string): string {
+  try {
+    return `${new URL(baseUrl).origin}/settings/tokens`;
+  } catch {
+    return "https://infracodebase.com/settings/tokens";
+  }
+}
+
+function hintFor(status: number, body: ApiErrorBody, baseUrl: string): string | null {
+  if (status === 401) {
+    return `The token was rejected. Check INFRACODEBASE_TOKEN in the MCP client config, or create a new token at ${tokensUrl(baseUrl)}.`;
+  }
+  if (status === 403 && /requires 'execute'/i.test(body.message ?? "")) {
+    return (
+      `This token is read-only. Creating or linking workspaces and attaching rulesets need a ` +
+      `"Read and write" token from ${tokensUrl(baseUrl)}; ask the user to create one and update INFRACODEBASE_TOKEN.`
+    );
+  }
+  if (status === 429) return "Rate limited. Wait before retrying.";
+  return null;
+}
+
+/**
+ * Turn an HTTP failure into the sentence the agent (and the user) should see.
+ *
+ * The API already returns a `message` it marks safe to surface, plus a stable
+ * `code` and a `request_id` for support. Lead with those and drop the URL,
+ * which only adds noise once the server has answered. Keep the URL for
+ * non-JSON bodies, where the usual cause is a wrong INFRACODEBASE_API_URL.
+ */
+export function formatApiError(status: number, body: string, path: string, baseUrl: string): string {
+  const parsed = parseErrorBody(body);
+  if (!parsed) {
+    const raw = body.length > MAX_RAW_BODY ? `${body.slice(0, MAX_RAW_BODY)}…` : body;
+    return `API request failed: ${status} ${baseUrl}${path}\n${raw}`;
+  }
+  const tag = [parsed.code ?? parsed.type, `HTTP ${status}`, parsed.request_id && `request ${parsed.request_id}`]
+    .filter(Boolean)
+    .join(", ");
+  const param = parsed.param ? ` (param: ${parsed.param})` : "";
+  const head = `${parsed.message}${param} [${tag}]`;
+  const hint = hintFor(status, parsed, baseUrl);
+  return hint ? `${head}\n${hint}` : head;
+}
+
 export class ApiError extends Error {
+  /** Stable machine-readable code from the API envelope, when the body was JSON. */
+  public code?: string;
+  public requestId?: string;
+
   constructor(
     public status: number,
     public body: string,
     public path: string,
     public baseUrl = ""
   ) {
-    // Include the host so a misconfigured API URL is diagnosable from the message.
-    super(`API request failed: ${status} ${baseUrl}${path}\n${body}`);
+    super(formatApiError(status, body, path, baseUrl));
     this.name = "ApiError";
+    const parsed = parseErrorBody(body);
+    this.code = parsed?.code;
+    this.requestId = parsed?.request_id;
   }
 }
