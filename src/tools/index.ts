@@ -5,9 +5,9 @@
  * Each tool lives in its own file (one `ToolDef` per file) and is imported
  * here. The `TOOLS` array below is the source of truth for what's registered:
  * to add a tool, create `src/tools/<name>.ts` and add its export to the list.
- * Shared plumbing (the API client, workspace→enterprise resolution, and the
- * registerTool wrapper) lives in `helpers.ts`; input schemas and descriptions
- * live in `validation.ts`.
+ * Shared plumbing (the API client, workspace→enterprise resolution, repo
+ * detection, and the registerTool wrapper) lives in `helpers.ts`; input
+ * schemas, descriptions, and annotations live in `validation.ts`.
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -27,6 +27,8 @@ import { listEnterpriseResources } from "./list_enterprise_resources.js";
 import { listModules } from "./list_modules.js";
 import { listVcsConnections } from "./list_vcs_connections.js";
 import { listVcsRepos } from "./list_vcs_repos.js";
+import { planWorkspaceSetup } from "./plan_workspace_setup.js";
+import { setupWorkspace } from "./setup_workspace.js";
 import { createWorkspace } from "./create_workspace.js";
 import { linkWorkspaceToRepo } from "./link_workspace_to_repo.js";
 import { updateWorkspaceResources } from "./update_workspace_resources.js";
@@ -51,6 +53,9 @@ export const TOOLS: ToolDef[] = [
   // Version control
   listVcsConnections,
   listVcsRepos,
+  // Setup
+  planWorkspaceSetup,
+  setupWorkspace,
   createWorkspace,
   linkWorkspaceToRepo,
   updateWorkspaceResources,

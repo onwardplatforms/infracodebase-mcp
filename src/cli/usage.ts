@@ -11,7 +11,7 @@ export function buildUsage(packageName = "infracodebase"): string {
 You normally never run this by hand - your MCP client spawns it (see below).
 Invoke it directly via npx, or as '${packageName}' if installed globally:
 
-Usage: npx -y @infracodebase/mcp@latest [--token=<token>] [--api-url=<url>]
+Usage: npx -y @infracodebase/mcp@2 [--token=<token>] [--api-url=<url>]
        ${packageName} [--token=<token>] [--api-url=<url>]   (global install)
 
 Commands:
@@ -21,6 +21,8 @@ Commands:
 Authentication (set in your MCP client's config, or pass as flags):
   INFRACODEBASE_TOKEN / --token <token>
         infracodebase personal access token (icb_pat_...). Required.
+        Use a "Read and write" token if the agent should be able to set up
+        new repos; a read-only token can only inspect.
   INFRACODEBASE_API_URL / --api-url <url>
         API endpoint. Defaults to ${"https://infracodebase.com/api/v1"};
         point it at a self-hosted instance if needed.
@@ -30,15 +32,15 @@ Add to your MCP client (e.g. Claude Desktop / Cursor mcp.json):
     "mcpServers": {
       "infracodebase": {
         "command": "npx",
-        "args": ["-y", "@infracodebase/mcp@latest"],
+        "args": ["-y", "@infracodebase/mcp@2"],
         "env": { "INFRACODEBASE_TOKEN": "icb_pat_..." }
       }
     }
   }
 
-Or with Claude Code:
-  claude mcp add infracodebase --env INFRACODEBASE_TOKEN=icb_pat_... -- npx -y @infracodebase/mcp@latest
+Or with Claude Code (--scope user makes it available in every project):
+  claude mcp add infracodebase --scope user --env INFRACODEBASE_TOKEN=icb_pat_... -- npx -y @infracodebase/mcp@2
 
 Get a token: https://infracodebase.com/settings/tokens
-Docs:        https://docs.infracodebase.com/mcp`;
+Docs:        https://infracodebase.com/docs/developers/mcp`;
 }

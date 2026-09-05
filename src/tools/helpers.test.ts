@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { createToolContext, registerTool, type ToolDef } from "./helpers.js";
+import { TOOL_ANNOTATIONS } from "./validation.js";
 import { mockClient } from "../test-helpers.js";
 import type { ServerContext } from "../server.js";
 
@@ -127,5 +128,26 @@ describe("registerTool", () => {
     const result = await calls[0].handler({});
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("boom");
+  });
+});
+
+describe("registerTool — metadata", () => {
+  it("passes the tool's title, annotations, description, and schema to the server", () => {
+    const calls: Array<{ name: string; config: any }> = [];
+    const server = {
+      registerTool: (name: string, config: unknown) => {
+        calls.push({ name, config });
+      },
+    } as any;
+
+    registerTool(server, { name: "get_workspace_context", run: async () => ({}) }, {} as any);
+
+    expect(calls[0].config).toMatchObject({
+      title: "Get workspace context",
+      annotations: TOOL_ANNOTATIONS.get_workspace_context,
+    });
+    expect(calls[0].config.annotations.readOnlyHint).toBe(true);
+    expect(typeof calls[0].config.description).toBe("string");
+    expect(calls[0].config.inputSchema).toBeDefined();
   });
 });
