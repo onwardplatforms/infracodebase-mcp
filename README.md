@@ -161,3 +161,11 @@ See [CONTRIBUTING.md](https://github.com/onwardplatforms/infracodebase-mcp/blob/
 ## Releases
 
 Versions publish to npm automatically. Each release is tagged `vX.Y.Z` with notes generated from the changes in that release. Browse the full changelog on the [GitHub Releases page](https://github.com/onwardplatforms/infracodebase-mcp/releases).
+
+## Manual ruleset sync
+
+When Manual mode is enabled for the enterprise, call `start_ruleset_sync` with a workspace ID and UUID `request_key`. Reuse the key when retrying the same start request. The run assesses the configured default branch and returns its persisted ID and review URL.
+
+Poll `get_ruleset_sync` or discover outstanding reviews with `list_ruleset_syncs`. Present the proposed changes and blocked reasons to the user. Only after their explicit selection, call `apply_ruleset_sync` with those `selected_change_ids`, or `dismiss_ruleset_sync` to accept none. Read tools require workspace ruleset view access; mutations require workspace ruleset management access and a write-capable credential.
+
+These tools require the application's `/ruleset-syncs` API endpoints; release this package change after those endpoints are deployed.

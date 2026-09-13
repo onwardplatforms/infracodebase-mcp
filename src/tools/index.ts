@@ -1,3 +1,8 @@
+import { startRulesetSync } from "./start_ruleset_sync.js";
+import { getRulesetSync } from "./get_ruleset_sync.js";
+import { listRulesetSyncs } from "./list_ruleset_syncs.js";
+import { applyRulesetSync } from "./apply_ruleset_sync.js";
+import { dismissRulesetSync } from "./dismiss_ruleset_sync.js";
 /**
  * Tool registry — the single, self-documenting list of every MCP tool the
  * server exposes.
@@ -33,6 +38,12 @@ import { updateWorkspaceResources } from "./update_workspace_resources.js";
 
 /** Every tool registered on the server, in registration order. */
 export const TOOLS: ToolDef[] = [
+  startRulesetSync,
+  getRulesetSync,
+  listRulesetSyncs,
+  applyRulesetSync,
+  dismissRulesetSync,
+
   // Workspace
   listEnterprises,
   listWorkspaces,

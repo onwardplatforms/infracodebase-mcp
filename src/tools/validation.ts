@@ -41,6 +41,12 @@ const enterpriseHint = {
 };
 
 export const TOOL_SHAPES = {
+  start_ruleset_sync: { ...enterpriseHint, workspace_id: z.string().uuid(), request_key: z.string().uuid(), },
+  get_ruleset_sync: { ...enterpriseHint, workspace_id: z.string().uuid(), run_id: z.string().uuid(), },
+  list_ruleset_syncs: { ...enterpriseHint, workspace_id: z.string().uuid(), cursor: z.string().uuid().optional(), status: z.enum(["queued", "running", "needs_review", "no_changes", "applied", "dismissed", "failed"]).optional(), },
+  apply_ruleset_sync: { ...enterpriseHint, workspace_id: z.string().uuid(), run_id: z.string().uuid(), selected_change_ids: z.array(z.string()).min(1).max(1000), },
+  dismiss_ruleset_sync: { ...enterpriseHint, workspace_id: z.string().uuid(), run_id: z.string().uuid(), },
+
   list_enterprises: {},
 
   list_workspaces: {
@@ -247,6 +253,12 @@ export const TOOL_SHAPES = {
 export type ToolName = keyof typeof TOOL_SHAPES;
 
 export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
+  start_ruleset_sync: "Start a ruleset sync only when requested by the user. Assesses the configured default branch and returns a persisted run ID and review URL. Never applies changes. Reuse request_key for retries; poll get_ruleset_sync and present the proposals before asking what to apply.",
+  get_ruleset_sync: "Read or poll a saved ruleset sync. Returns proposed changes and eligibility, including explanations for conflicts. Reading never runs another assessment or applies changes.",
+  list_ruleset_syncs: "Find saved workspace ruleset syncs, including active runs and reviews initiated through another interface.",
+  apply_ruleset_sync: "Apply only changes explicitly selected by the user after reviewing a saved proposal. A request to start sync is not permission to apply. Requires workspace.rulesets.manage. Returns final outcomes including skipped conflicts; required rules remain protected.",
+  dismiss_ruleset_sync: "Close a proposal without applying changes when the user chooses to dismiss it.",
+
   list_enterprises:
     "List enterprises the caller belongs to. Use this to find an enterprise_id for list_workspaces. Each row's workspace_count only counts STANDARD-kind workspaces — pass kinds: ['STANDARD','TEMPLATE','MODULE'] on list_workspaces if that number doesn't match what you see there.",
   list_workspaces:

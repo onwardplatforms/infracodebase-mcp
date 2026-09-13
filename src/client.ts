@@ -23,6 +23,25 @@ export class InfracodebaseClient {
   /**
    * Make an authenticated API request
    */
+  async startRulesetSync(enterpriseId: string, workspaceId: string, requestKey: string) {
+    return this.request<unknown>("POST", `/enterprises/${encodeURIComponent(enterpriseId)}/workspaces/${encodeURIComponent(workspaceId)}/ruleset-syncs`, { body: { request_key: requestKey, source: "mcp" } });
+  }
+  async getRulesetSync(enterpriseId: string, workspaceId: string, runId: string) {
+    return this.request<unknown>("GET", `/enterprises/${encodeURIComponent(enterpriseId)}/workspaces/${encodeURIComponent(workspaceId)}/ruleset-syncs/${encodeURIComponent(runId)}`);
+  }
+  async listRulesetSyncs(enterpriseId: string, workspaceId: string, options: { cursor?: string; status?: string } = {}) {
+    const query = new URLSearchParams();
+    if (options.cursor) query.set("cursor", options.cursor);
+    if (options.status) query.set("status", options.status);
+    return this.request<unknown>("GET", `/enterprises/${encodeURIComponent(enterpriseId)}/workspaces/${encodeURIComponent(workspaceId)}/ruleset-syncs${query.size ? `?${query}` : ""}`);
+  }
+  async applyRulesetSync(enterpriseId: string, workspaceId: string, runId: string, selectedChangeIds: string[]) {
+    return this.request<unknown>("POST", `/enterprises/${encodeURIComponent(enterpriseId)}/workspaces/${encodeURIComponent(workspaceId)}/ruleset-syncs/${encodeURIComponent(runId)}/apply`, { body: { selected_change_ids: selectedChangeIds } });
+  }
+  async dismissRulesetSync(enterpriseId: string, workspaceId: string, runId: string) {
+    return this.request<unknown>("POST", `/enterprises/${encodeURIComponent(enterpriseId)}/workspaces/${encodeURIComponent(workspaceId)}/ruleset-syncs/${encodeURIComponent(runId)}/dismiss`);
+  }
+
   private async request<T>(
     method: string,
     path: string,
