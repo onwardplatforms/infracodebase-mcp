@@ -44,6 +44,16 @@ afterEach(() => {
 });
 
 describe("InfracodebaseClient — request plumbing", () => {
+  it("fetches selected rules without a context request and preserves an explicit empty selection", async () => {
+    const fetchMock = stubFetch(jsonResponse({ selection_complete: true, rulesets: [] }));
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+    await client.getBuildRules("team", []);
+    expect(lastCall(fetchMock).url).toBe(
+      "https://api.example.com/build-rules?enterprise_id=team&ruleset_ids="
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("requests build context without a repository and encodes optional context selectors", async () => {
     const fetchMock = stubFetch(jsonResponse({ status: "unlinked", can_generate: true }));
     const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });

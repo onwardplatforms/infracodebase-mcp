@@ -76,6 +76,14 @@ export class InfracodebaseClient {
     return this.request<unknown>("GET", `/workspace-context${qs ? `?${qs}` : ""}`);
   }
 
+  async getBuildRules(enterpriseId: string, rulesetIds: string[]) {
+    const query = new URLSearchParams({
+      enterprise_id: enterpriseId,
+      ruleset_ids: rulesetIds.join(","),
+    });
+    return this.request<unknown>("GET", `/build-rules?${query}`);
+  }
+
   async getBuildContext(params: {
     rulesetIds?: string[];
     enterpriseId?: string;

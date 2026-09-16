@@ -26,7 +26,7 @@ export const listModules: ToolDef = {
       ...(result as Record<string, unknown>),
       enterprise_id: enterpriseId,
       guidance:
-        "Compare these modules with the user's intent. Recommend relevant modules by exact name and explain the fit; do not force unrelated matches. Do not infer security guarantees from a description or version number. Use get_workspace_context for applicable rules before drafting; an empty folder does not require repository setup. Inspect the selected version's interface before composing code. Prefer registry_source with version when present; otherwise use source_url with a Git ref. Catalog access does not establish workspace governance or grant permission to create infrastructure.",
+        "Compare these modules with the user's intent. Recommend relevant modules by exact name and explain the fit; do not force unrelated matches. Do not infer security guarantees from a description or version number. Use get_context for applicable rules before drafting; an empty folder does not require repository setup. Inspect the selected version's interface before composing code. Prefer registry_source with version when present; otherwise use source_url with a Git ref. Catalog access does not establish workspace governance or grant permission to create infrastructure.",
     };
   },
 };

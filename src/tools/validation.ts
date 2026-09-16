@@ -56,14 +56,7 @@ export const TOOL_SHAPES = {
       .optional(),
   },
 
-  get_workspace_context: {
-    ruleset_ids: z
-      .array(z.string().min(1))
-      .max(100)
-      .optional()
-      .describe(
-        "Relevant optional rules selected from available_rulesets for a NEW project; [] means none fit. Required rules always apply. Existing workspace configuration stays authoritative."
-      ),
+  get_context: {
     enterprise_id: z
       .string()
       .min(1)
@@ -88,10 +81,14 @@ export const TOOL_SHAPES = {
       .optional(),
   },
 
-  get_ruleset_details: {
-    workspace_id: z.string().min(1).describe("Workspace ID."),
-    ruleset_id: z.string().min(1).describe("Ruleset ID, from get_workspace_context."),
-    ...enterpriseHint,
+  get_rules: {
+    enterprise_id: z.string().min(1).describe("Enterprise from get_context."),
+    ruleset_ids: z
+      .array(z.string().min(1))
+      .max(100)
+      .describe(
+        "Relevant ruleset IDs from get_context; [] when no optional rules fit. Returns selected rule contents and required-plus-selected setup IDs without changing workspace settings."
+      ),
   },
 
   list_workspace_rulesets: {
@@ -294,10 +291,10 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
     "List enterprises the caller belongs to. Use this to find an enterprise_id for list_workspaces. Each row's workspace_count only counts STANDARD-kind workspaces — pass kinds: ['STANDARD','TEMPLATE','MODULE'] on list_workspaces if that number doesn't match what you see there.",
   list_workspaces:
     "List workspaces you have access to in an enterprise. Each workspace includes its linked repo if any. Use this to find workspace IDs. Defaults to STANDARD-kind workspaces only — pass kinds to include template and/or module workspaces too.",
-  get_workspace_context:
-    "Start here before designing, writing, or modifying infrastructure. One call returns applicable rule contents, coding guidelines, and module descriptions/sources. Omit arguments to detect the local Git remote via client roots or cwd. Linked repos get workspace context; empty folders and unlinked repos get enterprise required rules and can draft locally without setup. If multiple enterprises are accessible, choose one. Respect can_generate: false and access errors. Match intent against modules here; only fetch live versions/interfaces for selected candidates. Workspace setup is optional until tracked compliance is requested. This is drafting guidance, not a compliance evaluation.",
-  get_ruleset_details:
-    "Load the full text of every rule in a single ruleset. Returns rule id, title, full content, required flag, enabled flag, and order. Includes disabled rules (enabled: false) so you can see the whole catalog, not just what's currently active — filter on `enabled` if you only want the rules actually being evaluated.",
+  get_context:
+    "Start here before designing, writing, or modifying infrastructure. One call returns applicable rule contents, coding guidelines, and module descriptions/sources. Omit arguments to detect the local Git remote via client roots or cwd. Linked repos get workspace context; empty folders and unlinked repos get enterprise required rules and can draft locally without setup. If multiple enterprises are accessible, choose one. If selection_required, call get_rules for the relevant ruleset IDs; otherwise no second context call is needed. Other can_generate: false and access errors remain blockers. Match intent against modules here; only fetch live versions/interfaces for selected candidates. Workspace setup is optional until tracked compliance is requested. This is drafting guidance, not a compliance evaluation.",
+  get_rules:
+    "Read the full enabled rule content for selected enterprise rulesets after get_context. Accepts multiple ruleset_ids, or [] if no optional rules fit. Returns setup IDs including required rules for the later workspace handoff. Does not reload modules, repository context, or coding guidelines and does not mutate workspace settings. Use it with context from the same enterprise; selection_complete resolves only the rule-selection gate, never other access or catalog errors. Existing workspace configuration remains authoritative.",
   list_workspace_rulesets:
     "List every ruleset relevant to a workspace — including enterprise rulesets that exist in the catalog but this workspace hasn't opted into. Each row has `effective_enabled` (is it actually active here) and `workspace_setting` (the workspace's stored opinion, null if it's never opted in/out). Use this when you notice code introducing a resource type or concern that isn't covered by any currently-active ruleset, to check whether a relevant one already exists but just isn't attached — then offer to attach it via update_workspace_resources rather than assuming none exists. Only enterprise rulesets that are enabled and not required can be attached this way; required ones are already active regardless.",
   get_compliance_evaluation:
@@ -311,7 +308,7 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   list_enterprise_resources:
     "Return the rulesets, MCP servers, and workflows available in an enterprise. Each resource has a required flag.",
   list_modules:
-    "Get live module versions after get_workspace_context identifies relevant module candidates. Pass module_id to avoid fetching versions for unrelated modules. For initial discovery use get_workspace_context, which returns descriptions with rules in one call. No repository setup is required to discover modules. Each module includes source_url (underlying VCS repository), registry_source, source_kind, and versions. When registry_source is present, prefer it as the Terraform module source and pin a published version using version. Otherwise use the VCS source with a Git ref. Do not substitute the VCS URL for a linked registry module or invent a version when lookup fails; restore registry access first. Inspect the chosen version through connected Terraform tools or authenticated VCS access before using its inputs and outputs.",
+    "Get live module versions after get_context identifies relevant module candidates. Pass module_id to avoid fetching versions for unrelated modules. For initial discovery use get_context, which returns descriptions with rules in one call. No repository setup is required to discover modules. Each module includes source_url (underlying VCS repository), registry_source, source_kind, and versions. When registry_source is present, prefer it as the Terraform module source and pin a published version using version. Otherwise use the VCS source with a Git ref. Do not substitute the VCS URL for a linked registry module or invent a version when lookup fails; restore registry access first. Inspect the chosen version through connected Terraform tools or authenticated VCS access before using its inputs and outputs.",
   list_vcs_connections:
     "Return the version-control connections (GitHub, GitLab, …) configured for an enterprise, each with its provider, host, and account. Use a connection's id with list_vcs_repos and when linking a repo.",
   list_vcs_repos:
