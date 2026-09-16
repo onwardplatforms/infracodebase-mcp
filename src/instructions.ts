@@ -1,0 +1,9 @@
+/** Keep cold-start discovery visible within clients' initialization-text budgets. */
+export const SERVER_INSTRUCTIONS_BUDGET = 1800;
+export const SERVER_INSTRUCTIONS = `For Terraform or an undecided IaC tool, when the user describes new infrastructure or adds a resource type, call list_modules before proposing a design, even in an empty folder without Git, a remote, or a workspace. Omit enterprise_id if unknown: one accessible enterprise is selected automatically; if several are returned, ask which one. For an existing workspace use its enterprise. Cosmetic edits do not need a catalog lookup.
+
+Compare the request with module names and descriptions. Suggest relevant company modules by exact name, explain the fit, and show their source. Do not force unrelated modules or invent missing ones. If lookup fails, report it instead of assuming no modules exist. This read-only recommendation must not wait for repository setup or create a workspace. Before composing code, inspect the chosen version's inputs/outputs through connected Terraform tools or authenticated VCS access. Prefer registry_source with version when linked; otherwise use source_url with a Git ref.
+
+Before writing or modifying IaC, call get_workspace_context with the current repo_url or workspace_id. With no known remote, present the module recommendation and ask for a target repo; stop before setup/context calls. Never pass a local folder as repo_url. For unlinked repos, load enterprise resources and VCS connections, confirm setup and rulesets, create/link the workspace, then reload context. Never reuse an unrelated repo or bypass no_access/ambiguous results. Follow returned rulesets and coding guidelines.
+
+Compliance checks evaluate pushed code. Commit and push first. Check once for an existing run, then trigger only if needed, with the branch ref. Share the results URL; do not poll. Relay warnings and repository errors from setup operations.`;

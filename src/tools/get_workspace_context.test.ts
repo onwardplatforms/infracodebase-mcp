@@ -55,7 +55,12 @@ describe("get_workspace_context", () => {
   it.each(["unlinked", "no_access", "ambiguous"] as const)(
     "passes through a %s response verbatim, including its message field",
     async (status) => {
-      const response = { status, owner: "owner", name: "name", message: `explanation for ${status}` };
+      const response = {
+        status,
+        owner: "owner",
+        name: "name",
+        message: `explanation for ${status}`,
+      };
       const client = mockClient({
         resolveWorkspaceContext: vi.fn().mockResolvedValue(response),
       });
@@ -67,13 +72,16 @@ describe("get_workspace_context", () => {
     }
   );
 
-  it("throws when neither workspace_id nor repo_url is provided", async () => {
-    const client = mockClient({ resolveWorkspaceContext: vi.fn() });
-    const ctx = mockContext({ client });
+  it.each([undefined, "/tmp/new-project", "file:///tmp/new-project"])(
+    "guides discovery before setup without a remote (%s)",
+    async (repo_url) => {
+      const client = mockClient({ resolveWorkspaceContext: vi.fn() });
+      const ctx = mockContext({ client });
 
-    await expect(getWorkspaceContext.run(ctx, {})).rejects.toThrow(
-      /Provide either workspace_id or repo_url/
-    );
-    expect(client.resolveWorkspaceContext).not.toHaveBeenCalled();
-  });
+      expect(await getWorkspaceContext.run(ctx, { repo_url })).toMatchObject({
+        status: "no_repository",
+      });
+      expect(client.resolveWorkspaceContext).not.toHaveBeenCalled();
+    }
+  );
 });

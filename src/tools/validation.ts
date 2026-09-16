@@ -159,7 +159,13 @@ export const TOOL_SHAPES = {
   },
 
   list_modules: {
-    enterprise_id: z.string().min(1).describe("Enterprise ID from list_enterprises."),
+    enterprise_id: z
+      .string()
+      .min(1)
+      .describe(
+        "Enterprise from workspace context or the user's choice. Omit to auto-select the sole accessible enterprise; multiple enterprises require a choice."
+      )
+      .optional(),
   },
 
   list_vcs_connections: {
@@ -252,7 +258,7 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   list_workspaces:
     "List workspaces you have access to in an enterprise. Each workspace includes its linked repo if any. Use this to find workspace IDs. Defaults to STANDARD-kind workspaces only — pass kinds to include template and/or module workspaces too.",
   get_workspace_context:
-    "Get full workspace context. Returns workspace identity, applicable rulesets, coding guidelines, latest compliance state, and approved module catalog summary. Pass repo_url (from the repo's git remote) or workspace_id. Response `status` is one of: linked (context returned as above), unlinked (no workspace matches this repo, so no rulesets are in force yet — run the full setup before writing any IaC: pick the enterprise and VCS connection, confirm the repo exists on the provider, then create_workspace with the right rulesets attached, and only then write code, so the rules are in hand up front instead of forcing rework; don't write IaC into an unlinked repo and link afterward), no_access (a workspace exists but you don't have permission to see it — don't imply it doesn't exist), or ambiguous (the repo matches workspaces in more than one enterprise — call again with an explicit workspace_id). Every non-linked status includes a message field with what to tell the user or do next.",
+    "Get full workspace context. Returns workspace identity, applicable rulesets, coding guidelines, latest compliance state, and approved module catalog summary. Pass repo_url (a remote URL, never a local folder path) or workspace_id. Without a repository identity, returns no_repository with guidance to discover and recommend modules before asking about setup. Response `status` is one of: linked (context returned as above), unlinked (no workspace matches this repo, so no rulesets are in force yet — run the full setup before writing any IaC: pick the enterprise and VCS connection, confirm the repo exists on the provider, then create_workspace with the right rulesets attached, and only then write code, so the rules are in hand up front instead of forcing rework; don't write IaC into an unlinked repo and link afterward), no_access (a workspace exists but you don't have permission to see it — don't imply it doesn't exist), or ambiguous (the repo matches workspaces in more than one enterprise — call again with an explicit workspace_id). Every non-linked status includes a message field with what to tell the user or do next.",
   get_ruleset_details:
     "Load the full text of every rule in a single ruleset. Returns rule id, title, full content, required flag, enabled flag, and order. Includes disabled rules (enabled: false) so you can see the whole catalog, not just what's currently active — filter on `enabled` if you only want the rules actually being evaluated.",
   list_workspace_rulesets:
@@ -268,7 +274,7 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   list_enterprise_resources:
     "Return the rulesets, MCP servers, and workflows available in an enterprise. Each resource has a required flag.",
   list_modules:
-    "Discover approved company modules before writing or extending infrastructure. Each module includes source_url (underlying VCS repository), registry_source, source_kind, and versions. When registry_source is present, prefer it as the Terraform module source and pin a published version using version. Otherwise use the VCS source with a Git ref. Do not substitute the VCS URL for a linked registry module or invent a version when lookup fails; restore registry access first. Inspect the chosen version through connected Terraform tools or authenticated VCS access before using its inputs and outputs.",
+    "Call when a user describes infrastructure they want to build, before proposing resources or writing code—even in an empty folder with no Git remote or workspace. Compare their intent with returned module names and descriptions and suggest relevant company modules. No repository setup is required to discover modules. Each module includes source_url (underlying VCS repository), registry_source, source_kind, and versions. When registry_source is present, prefer it as the Terraform module source and pin a published version using version. Otherwise use the VCS source with a Git ref. Do not substitute the VCS URL for a linked registry module or invent a version when lookup fails; restore registry access first. Inspect the chosen version through connected Terraform tools or authenticated VCS access before using its inputs and outputs.",
   list_vcs_connections:
     "Return the version-control connections (GitHub, GitLab, …) configured for an enterprise, each with its provider, host, and account. Use a connection's id with list_vcs_repos and when linking a repo.",
   list_vcs_repos:
