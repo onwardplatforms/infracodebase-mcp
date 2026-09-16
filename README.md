@@ -77,6 +77,8 @@ The server gives your agent 17 tools, grouped into five areas. Your token comes 
 | `list_compliance_findings` | See the pass or fail result for each rule in a run. | `workspace_id`, `ref?`, `status?` |
 | `get_compliance_eval_spec` | See the exact instructions the compliance checker follows. | `workspace_id` |
 
+Modules are recommendations, not implicit choices. The agent must explain a clear fit, present alternatives when considering several modules, and ask whether you want to use them before generating module-based code. Selecting an enterprise is not approval to use a module.
+
 ### Enterprise resources
 
 | Tool | What it does | Key inputs |
