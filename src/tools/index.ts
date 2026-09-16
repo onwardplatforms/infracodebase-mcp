@@ -14,6 +14,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ServerContext } from "../server.js";
 import { createToolContext, registerTool, type ToolDef } from "./helpers.js";
 
+import { setupWorkspace } from "./setup_workspace.js";
 import { listEnterprises } from "./list_enterprises.js";
 import { listWorkspaces } from "./list_workspaces.js";
 import { getWorkspaceContext } from "./get_workspace_context.js";
@@ -51,6 +52,7 @@ export const TOOLS: ToolDef[] = [
   // Version control
   listVcsConnections,
   listVcsRepos,
+  setupWorkspace,
   createWorkspace,
   linkWorkspaceToRepo,
   updateWorkspaceResources,

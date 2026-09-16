@@ -3,85 +3,65 @@ import { getWorkspaceContext } from "./get_workspace_context.js";
 import { mockClient, mockContext } from "../test-helpers.js";
 
 describe("get_workspace_context", () => {
-  it("resolves by workspace_id via a single client call", async () => {
-    const client = mockClient({
-      resolveWorkspaceContext: vi.fn().mockResolvedValue({ status: "linked" }),
-    });
-    const ctx = mockContext({ client });
-
-    await getWorkspaceContext.run(ctx, { workspace_id: "ws_1", iac_tool: "terraform" });
-
-    expect(client.resolveWorkspaceContext).toHaveBeenCalledWith({
-      repoUrl: undefined,
-      workspaceId: "ws_1",
-      iacTool: "terraform",
-    });
-  });
-
-  it("resolves by repo_url via the same single client call", async () => {
-    const client = mockClient({
-      resolveWorkspaceContext: vi.fn().mockResolvedValue({ status: "linked" }),
-    });
-    const ctx = mockContext({ client });
-
-    await getWorkspaceContext.run(ctx, { repo_url: "owner/name" });
-
-    expect(client.resolveWorkspaceContext).toHaveBeenCalledWith({
-      repoUrl: "owner/name",
-      workspaceId: undefined,
-      iacTool: undefined,
-    });
-  });
-
-  it("returns the client's response verbatim for a linked workspace, including nested fields", async () => {
-    const linkedResponse = {
-      status: "linked",
-      workspace: { id: "ws_1", name: "Infra", repo: { owner: "acme", name: "infra" } },
-      rulesets: [{ id: "rs_1", title: "Security" }],
-      coding_guidelines: "Use least privilege.",
-      compliance: { score: 92 },
-      modules: { status: "ok", count: 3 },
+  it("uses one request for an empty folder with enterprise drafting context", async () => {
+    const response = {
+      status: "unlinked",
+      can_generate: true,
+      rulesets: [{ title: "Security", rules: [{ content: "Encrypt volumes" }] }],
+      modules: { entries: [] },
     };
-    const client = mockClient({
-      resolveWorkspaceContext: vi.fn().mockResolvedValue(linkedResponse),
+    const client = mockClient({ getBuildContext: vi.fn().mockResolvedValue(response) });
+    const result = await getWorkspaceContext.run(mockContext({ client }), {
+      iac_tool: "terraform",
     });
-    const ctx = mockContext({ client });
-
-    const result = await getWorkspaceContext.run(ctx, { workspace_id: "ws_1" });
-
-    expect(result).toEqual(linkedResponse);
+    expect(result).toMatchObject(response);
+    expect(client.getBuildContext).toHaveBeenCalledExactlyOnceWith({
+      repoUrl: undefined,
+      workspaceId: undefined,
+      enterpriseId: undefined,
+      rulesetIds: undefined,
+      iacTool: "terraform",
+      branch: undefined,
+    });
+    expect(client.listEnterprises).not.toHaveBeenCalled();
   });
-
-  it.each(["unlinked", "no_access", "ambiguous"] as const)(
-    "passes through a %s response verbatim, including its message field",
+  it("uses the detected remote and makes detection visible", async () => {
+    const client = mockClient({
+      getBuildContext: vi.fn().mockResolvedValue({ status: "linked", can_generate: true }),
+    });
+    const ctx = mockContext({
+      client,
+      resolveRepoUrl: vi
+        .fn()
+        .mockResolvedValue({ repo_url: "git@gitlab.com:org/project.git", resolved_from: "roots" }),
+    });
+    expect(
+      await getWorkspaceContext.run(ctx, { branch: "feature", enterprise_id: "ent" })
+    ).toMatchObject({
+      resolved_repo_url: "git@gitlab.com:org/project.git",
+      resolved_from: "roots",
+    });
+    expect(client.getBuildContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repoUrl: "git@gitlab.com:org/project.git",
+        branch: "feature",
+        enterpriseId: "ent",
+      })
+    );
+  });
+  it.each(["no_access", "needs_enterprise", "ambiguous"])(
+    "preserves the %s generation gate",
     async (status) => {
-      const response = {
-        status,
-        owner: "owner",
-        name: "name",
-        message: `explanation for ${status}`,
-      };
-      const client = mockClient({
-        resolveWorkspaceContext: vi.fn().mockResolvedValue(response),
-      });
+      const response = { status, can_generate: false, message: "Resolve before drafting" };
+      const client = mockClient({ getBuildContext: vi.fn().mockResolvedValue(response) });
       const ctx = mockContext({ client });
-
-      const result = await getWorkspaceContext.run(ctx, { repo_url: "owner/name" });
-
-      expect(result).toEqual(response);
+      expect(await getWorkspaceContext.run(ctx, { workspace_id: "ws" })).toEqual(response);
+      expect(ctx.resolveRepoUrl).not.toHaveBeenCalled();
     }
   );
-
-  it.each([undefined, "/tmp/new-project", "file:///tmp/new-project"])(
-    "guides discovery before setup without a remote (%s)",
-    async (repo_url) => {
-      const client = mockClient({ resolveWorkspaceContext: vi.fn() });
-      const ctx = mockContext({ client });
-
-      expect(await getWorkspaceContext.run(ctx, { repo_url })).toMatchObject({
-        status: "no_repository",
-      });
-      expect(client.resolveWorkspaceContext).not.toHaveBeenCalled();
-    }
-  );
+  it("does not fall back to enterprise context after a Git error", async () => {
+    const ctx = mockContext({ resolveRepoUrl: vi.fn().mockRejectedValue(new Error("Git failed")) });
+    await expect(getWorkspaceContext.run(ctx, {})).rejects.toThrow("Git failed");
+    expect(ctx.client.getBuildContext).not.toHaveBeenCalled();
+  });
 });

@@ -82,9 +82,11 @@ The server gives your agent 16 tools, grouped into five areas. Your token comes 
 | Tool | What it does | Key inputs |
 | --- | --- | --- |
 | `list_enterprise_resources` | See the rulesets, MCP servers, and workflows an enterprise offers. | `enterprise_id` |
-| `list_modules` | See the approved, reusable infrastructure modules, with their source and version. | `enterprise_id` |
+| `list_modules` | See the approved, reusable infrastructure modules, with their source and version. | `enterprise_id?`, `module_id?` |
 
 ### Version control and setup
+
+`setup_workspace` completes the new-project handoff: pass the drafting context’s `enterprise_id`, `ruleset_ids`, and the pushed `branch`. The remote is detected automatically. A connection choice is only needed when several match. Setup errors retain the workspace ID for recovery; do not retry creation blindly.
 
 | Tool | What it does | Key inputs |
 | --- | --- | --- |
@@ -136,7 +138,7 @@ The server reads its token and API URL from a command flag first, then an enviro
 
 - Missing or invalid token. The server needs `INFRACODEBASE_TOKEN` in its `env`. Generate one at [infracodebase.com/settings/tokens](https://infracodebase.com/settings/tokens).
 - TLS errors against a self-hosted instance. If your instance uses a private certificate authority, set `NODE_EXTRA_CA_CERTS` to the path of your root certificate.
-- `get_workspace_context` returns `unlinked`. No workspace matches the repo yet, so no rulesets are in force. Set the repo up before writing any IaC: pick the enterprise and VCS connection, confirm the repo exists on the provider with `list_vcs_repos`, then `create_workspace` with the right rulesets attached (or `link_workspace_to_repo` for an existing workspace). Doing this first means you write against the rules instead of reworking the code once they attach.
+- `get_workspace_context` automatically detects the client Git remote and returns rules, guidelines, and module descriptions in one call. For new projects, select relevant optional rulesets from the returned summaries and call again with `ruleset_ids` (or `[]`) to load their full rules alongside required rules. Draft locally without workspace setup. Carry `setup.enterprise_id` and `setup.ruleset_ids` into `setup_workspace` once a remote and pushed branch exist. Multiple enterprises require a choice; access failures block generation. Setup reuses an existing workspace or creates one with the selected rules and repository webhook. Existing workspace rules stay authoritative. After pushing, check for an evaluation covering the commit and trigger one if necessary, including when the push preceded webhook setup.
 
 ## CLI
 

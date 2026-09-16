@@ -19,12 +19,14 @@ export const listModules: ToolDef = {
       }
       enterpriseId = enterprises[0].id;
     }
-    const result = await client.listModules(enterpriseId);
+    const result = a.module_id
+      ? await client.listModules(enterpriseId, a.module_id)
+      : await client.listModules(enterpriseId);
     return {
       ...(result as Record<string, unknown>),
       enterprise_id: enterpriseId,
       guidance:
-        "Compare these modules with the user's intent. Recommend relevant modules by exact name and explain the fit; do not force unrelated matches. Do not infer security guarantees from a description or version number. In a new folder, present the recommendation now and ask for the target repository before any setup calls. Inspect the selected version's interface before composing code. Prefer registry_source with version when present; otherwise use source_url with a Git ref. Catalog access does not establish workspace governance or grant permission to create infrastructure.",
+        "Compare these modules with the user's intent. Recommend relevant modules by exact name and explain the fit; do not force unrelated matches. Do not infer security guarantees from a description or version number. Use get_workspace_context for applicable rules before drafting; an empty folder does not require repository setup. Inspect the selected version's interface before composing code. Prefer registry_source with version when present; otherwise use source_url with a Git ref. Catalog access does not establish workspace governance or grant permission to create infrastructure.",
     };
   },
 };

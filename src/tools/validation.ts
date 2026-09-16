@@ -57,16 +57,29 @@ export const TOOL_SHAPES = {
   },
 
   get_workspace_context: {
+    ruleset_ids: z
+      .array(z.string().min(1))
+      .max(100)
+      .optional()
+      .describe(
+        "Relevant optional rules selected from available_rulesets for a NEW project; [] means none fit. Required rules always apply. Existing workspace configuration stays authoritative."
+      ),
+    enterprise_id: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("Enterprise to use when several are accessible; otherwise resolved automatically."),
+    branch: z.string().min(1).optional().describe("Current branch when known."),
     workspace_id: z
       .string()
       .min(1)
-      .describe("Workspace ID. Provide this or repo_url. Get IDs from list_workspaces.")
+      .describe("Optional workspace ID. Otherwise detect the local Git remote automatically.")
       .optional(),
     repo_url: z
       .string()
       .min(1)
       .describe(
-        "Git remote URL of the repo (e.g. https://github.com/owner/name or owner/name). Provide this or workspace_id."
+        "Git remote URL of the repo (e.g. https://github.com/owner/name or owner/name). Omit to auto-detect; no remote is required for enterprise drafting context."
       )
       .optional(),
     iac_tool: z
@@ -159,6 +172,11 @@ export const TOOL_SHAPES = {
   },
 
   list_modules: {
+    module_id: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("Selected module ID from context. Limits live version lookup to this module."),
     enterprise_id: z
       .string()
       .min(1)
@@ -183,6 +201,25 @@ export const TOOL_SHAPES = {
     search: z.string().describe("Optional search query to filter repos.").optional(),
   },
 
+  setup_workspace: {
+    enterprise_id: z.string().min(1).describe("Enterprise from drafting context."),
+    ruleset_ids: z
+      .array(z.string().min(1))
+      .max(100)
+      .describe("Carry setup.ruleset_ids from the drafting context; never reselect or omit them."),
+    repo_url: z.string().min(1).optional().describe("Omit to detect the current Git remote."),
+    branch: z
+      .string()
+      .min(1)
+      .describe("Branch pushed to this remote; required for cloning and initial compliance."),
+    iac_tool: z.enum(IAC_TOOLS).optional(),
+    connection_id: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("Only needed if multiple connections match."),
+    workspace_name: z.string().min(1).optional().describe("Defaults to the repository name."),
+  },
   create_workspace: {
     enterprise_id: z.string().min(1).describe("Enterprise ID."),
     name: z.string().min(1).describe("Workspace name."),
@@ -258,7 +295,7 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   list_workspaces:
     "List workspaces you have access to in an enterprise. Each workspace includes its linked repo if any. Use this to find workspace IDs. Defaults to STANDARD-kind workspaces only — pass kinds to include template and/or module workspaces too.",
   get_workspace_context:
-    "Get full workspace context. Returns workspace identity, applicable rulesets, coding guidelines, latest compliance state, and approved module catalog summary. Pass repo_url (a remote URL, never a local folder path) or workspace_id. Without a repository identity, returns no_repository with guidance to discover and recommend modules before asking about setup. Response `status` is one of: linked (context returned as above), unlinked (no workspace matches this repo, so no rulesets are in force yet — run the full setup before writing any IaC: pick the enterprise and VCS connection, confirm the repo exists on the provider, then create_workspace with the right rulesets attached, and only then write code, so the rules are in hand up front instead of forcing rework; don't write IaC into an unlinked repo and link afterward), no_access (a workspace exists but you don't have permission to see it — don't imply it doesn't exist), or ambiguous (the repo matches workspaces in more than one enterprise — call again with an explicit workspace_id). Every non-linked status includes a message field with what to tell the user or do next.",
+    "Start here before designing, writing, or modifying infrastructure. One call returns applicable rule contents, coding guidelines, and module descriptions/sources. Omit arguments to detect the local Git remote via client roots or cwd. Linked repos get workspace context; empty folders and unlinked repos get enterprise required rules and can draft locally without setup. If multiple enterprises are accessible, choose one. Respect can_generate: false and access errors. Match intent against modules here; only fetch live versions/interfaces for selected candidates. Workspace setup is optional until tracked compliance is requested. This is drafting guidance, not a compliance evaluation.",
   get_ruleset_details:
     "Load the full text of every rule in a single ruleset. Returns rule id, title, full content, required flag, enabled flag, and order. Includes disabled rules (enabled: false) so you can see the whole catalog, not just what's currently active — filter on `enabled` if you only want the rules actually being evaluated.",
   list_workspace_rulesets:
@@ -274,11 +311,13 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   list_enterprise_resources:
     "Return the rulesets, MCP servers, and workflows available in an enterprise. Each resource has a required flag.",
   list_modules:
-    "Call when a user describes infrastructure they want to build, before proposing resources or writing code—even in an empty folder with no Git remote or workspace. Compare their intent with returned module names and descriptions and suggest relevant company modules. No repository setup is required to discover modules. Each module includes source_url (underlying VCS repository), registry_source, source_kind, and versions. When registry_source is present, prefer it as the Terraform module source and pin a published version using version. Otherwise use the VCS source with a Git ref. Do not substitute the VCS URL for a linked registry module or invent a version when lookup fails; restore registry access first. Inspect the chosen version through connected Terraform tools or authenticated VCS access before using its inputs and outputs.",
+    "Get live module versions after get_workspace_context identifies relevant module candidates. Pass module_id to avoid fetching versions for unrelated modules. For initial discovery use get_workspace_context, which returns descriptions with rules in one call. No repository setup is required to discover modules. Each module includes source_url (underlying VCS repository), registry_source, source_kind, and versions. When registry_source is present, prefer it as the Terraform module source and pin a published version using version. Otherwise use the VCS source with a Git ref. Do not substitute the VCS URL for a linked registry module or invent a version when lookup fails; restore registry access first. Inspect the chosen version through connected Terraform tools or authenticated VCS access before using its inputs and outputs.",
   list_vcs_connections:
     "Return the version-control connections (GitHub, GitLab, …) configured for an enterprise, each with its provider, host, and account. Use a connection's id with list_vcs_repos and when linking a repo.",
   list_vcs_repos:
     "Return repositories accessible via a version-control connection — same shape for every provider. Each repo's `path` is the full provider path (GitLab subgroups included); pass it verbatim as repo_path when linking.",
+  setup_workspace:
+    "Once a real remote and pushed branch exist, complete new-project workspace setup using the same setup.ruleset_ids returned while drafting. Detects the remote, reuses an existing linked workspace, finds a matching VCS connection, or creates a repository-bound workspace with selected plus required rules and webhook setup. No empty workspace is created without repository access. Respect incomplete/ambiguous/access-error results. Retain the returned workspace ID on partial failure and recover via link_workspace_to_repo; never repeat creation blindly. After success compare current rules with the draft, check for a run covering the pushed commit, and trigger compliance with the branch ref only if needed. Do not deploy or push just to satisfy setup unless the user authorized those actions.",
   create_workspace:
     "Create a workspace with optional rulesets, MCP servers, and workflows. Call list_enterprise_resources first. To also link a repo, pass connection_id + repo_path + branch (from list_vcs_connections / list_vcs_repos). A repo links to at most one workspace, so first confirm with list_workspaces that no workspace already owns this repo — if one does, attach rulesets to it with update_workspace_resources instead of creating a second workspace, since the link here would fail. This tool links an existing repo; it does not create one on the provider — the repo must already exist there (create it with the provider's CLI, e.g. gh or glab, if it doesn't). IMPORTANT: check `repository_linked` in the result whenever you request a link — false means the workspace exists but the link failed (see repository_error). A `warning` means the repo linked but its delivery webhook couldn't be registered, so pushes will NOT trigger compliance until it's re-linked — surface both to the user, never report an unqualified success over them.",
   link_workspace_to_repo:

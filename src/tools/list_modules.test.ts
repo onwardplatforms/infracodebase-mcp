@@ -3,6 +3,14 @@ import { listModules } from "./list_modules.js";
 import { mockClient, mockContext } from "../test-helpers.js";
 
 describe("module discovery without a workspace", () => {
+  it("fetches versions only for the selected module when context already identifies it", async () => {
+    const client = mockClient({
+      listModules: vi.fn().mockResolvedValue({ modules: [{ id: "ec2", versions: ["1.0.0"] }] }),
+    });
+    await listModules.run(mockContext({ client }), { enterprise_id: "team", module_id: "ec2" });
+    expect(client.listModules).toHaveBeenCalledExactlyOnceWith("team", "ec2");
+    expect(client.listEnterprises).not.toHaveBeenCalled();
+  });
   it("returns the sole enterprise's catalog without resolving or creating a workspace", async () => {
     const module = {
       name: "terraform-aws-ec2",

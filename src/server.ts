@@ -15,6 +15,7 @@ import { VERSION } from "./version.js";
 import { SERVER_INSTRUCTIONS } from "./instructions.js";
 
 export interface ServerContext {
+  listRoots?: () => Promise<string[]>;
   client: InfracodebaseClient;
   // Maps a known workspace back to its enterprise to avoid repeated API calls
   workspaceEnterpriseMap: Map<string, string>;
@@ -41,6 +42,11 @@ export async function createServer(config: Config): Promise<{
   const context: ServerContext = {
     client,
     workspaceEnterpriseMap: new Map(),
+    listRoots: async () => {
+      if (!server.server.getClientCapabilities()?.roots) return [];
+      const { roots } = await server.server.listRoots();
+      return roots.map((root) => root.uri);
+    },
   };
 
   // Register all tools with consolidated handlers
