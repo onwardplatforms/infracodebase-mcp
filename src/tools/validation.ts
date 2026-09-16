@@ -268,7 +268,7 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   list_enterprise_resources:
     "Return the rulesets, MCP servers, and workflows available in an enterprise. Each resource has a required flag.",
   list_modules:
-    "Return the enterprise's approved reusable infrastructure modules with source URLs and versions.",
+    "Discover approved company modules before writing or extending infrastructure. Each module includes source_url (underlying VCS repository), registry_source, source_kind, and versions. When registry_source is present, prefer it as the Terraform module source and pin a published version using version. Otherwise use the VCS source with a Git ref. Do not substitute the VCS URL for a linked registry module or invent a version when lookup fails; restore registry access first. Inspect the chosen version through connected Terraform tools or authenticated VCS access before using its inputs and outputs.",
   list_vcs_connections:
     "Return the version-control connections (GitHub, GitLab, …) configured for an enterprise, each with its provider, host, and account. Use a connection's id with list_vcs_repos and when linking a repo.",
   list_vcs_repos:
