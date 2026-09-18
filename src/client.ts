@@ -76,6 +76,34 @@ export class InfracodebaseClient {
     return this.request<unknown>("GET", `/workspace-context${qs ? `?${qs}` : ""}`);
   }
 
+  async getBuildRules(enterpriseId: string, rulesetIds: string[]) {
+    const query = new URLSearchParams({
+      enterprise_id: enterpriseId,
+      ruleset_ids: rulesetIds.join(","),
+    });
+    return this.request<unknown>("GET", `/build-rules?${query}`);
+  }
+
+  async getBuildContext(params: {
+    rulesetIds?: string[];
+    enterpriseId?: string;
+    branch?: string;
+    repoUrl?: string;
+    workspaceId?: string;
+    iacTool?: string;
+  }) {
+    const query = new URLSearchParams();
+    if (params.repoUrl) query.set("repo_url", params.repoUrl);
+    if (params.workspaceId) query.set("workspace_id", params.workspaceId);
+    if (params.iacTool) query.set("iac_tool", params.iacTool);
+    if (params.rulesetIds !== undefined) query.set("ruleset_ids", params.rulesetIds.join(","));
+    if (params.enterpriseId) query.set("enterprise_id", params.enterpriseId);
+    if (params.branch) query.set("branch", params.branch);
+    const qs = query.toString();
+
+    return this.request<unknown>("GET", `/build-context${qs ? `?${qs}` : ""}`);
+  }
+
   async listEnterprises() {
     return this.request<{ data: Array<unknown> }>("GET", "/enterprises");
   }
@@ -209,8 +237,9 @@ export class InfracodebaseClient {
     return this.request<unknown>("GET", `/enterprises/${enterpriseId}/resources`);
   }
 
-  async listModules(enterpriseId: string) {
-    return this.request<unknown>("GET", `/enterprises/${enterpriseId}/modules`);
+  async listModules(enterpriseId: string, moduleId?: string) {
+    const query = moduleId ? `?module_id=${encodeURIComponent(moduleId)}` : "";
+    return this.request<unknown>("GET", `/enterprises/${enterpriseId}/modules${query}`);
   }
 
   // ---------------------------------------------------------------------------

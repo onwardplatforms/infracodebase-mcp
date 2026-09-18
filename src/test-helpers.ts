@@ -31,6 +31,10 @@ export function mockClient(methods: Partial<Record<keyof InfracodebaseClient, un
 export function mockContext(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
     client: mockClient(),
+    resolveRepoUrl: vi.fn(async (explicit?: string) => ({
+      repo_url: explicit,
+      resolved_from: explicit ? ("argument" as const) : ("cwd" as const),
+    })),
     listAllWorkspaces: vi.fn(async () => [] as WorkspaceEntry[]),
     getEnterpriseForWorkspace: vi.fn(async () => "ent_default"),
     ...overrides,

@@ -36,7 +36,7 @@ function jsonResponse(body: unknown, status = 200) {
  * tests, and a hardcoded version fails every release.
  */
 const packageVersion = JSON.parse(
-  readFileSync(new URL("../package.json", import.meta.url), "utf-8"),
+  readFileSync(new URL("../package.json", import.meta.url), "utf-8")
 ).version as string;
 
 afterEach(() => {
@@ -44,6 +44,40 @@ afterEach(() => {
 });
 
 describe("InfracodebaseClient — request plumbing", () => {
+  it("fetches selected rules without a context request and preserves an explicit empty selection", async () => {
+    const fetchMock = stubFetch(jsonResponse({ selection_complete: true, rulesets: [] }));
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+    await client.getBuildRules("team", []);
+    expect(lastCall(fetchMock).url).toBe(
+      "https://api.example.com/build-rules?enterprise_id=team&ruleset_ids="
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("requests build context without a repository and encodes optional context selectors", async () => {
+    const fetchMock = stubFetch(jsonResponse({ status: "unlinked", can_generate: true }));
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+    await client.getBuildContext({
+      enterpriseId: "team",
+      branch: "feature/queue",
+      iacTool: "terraform",
+    });
+    const url = new URL(lastCall(fetchMock).url);
+    expect(url.pathname).toBe("/build-context");
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      enterprise_id: "team",
+      branch: "feature/queue",
+      iac_tool: "terraform",
+    });
+  });
+  it("limits module version lookup to the selected module", async () => {
+    const fetchMock = stubFetch(jsonResponse({ modules: [] }));
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+    await client.listModules("team", "selected");
+    expect(lastCall(fetchMock).url).toBe(
+      "https://api.example.com/enterprises/team/modules?module_id=selected"
+    );
+  });
   it("strips a trailing slash from baseUrl when building the URL", async () => {
     const fetchMock = stubFetch(jsonResponse({ data: [] }));
     const client = new InfracodebaseClient({ baseUrl: "https://api.example.com/", token: "t" });

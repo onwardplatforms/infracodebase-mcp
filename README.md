@@ -51,7 +51,7 @@ A few terms show up throughout the tools.
 
 ## Tools
 
-The server gives your agent 16 tools, grouped into five areas. Your token comes from the client config, so you never pass credentials as a tool argument. When in doubt, start with `get_workspace_context`. It tells the agent everything it needs to know about a repo.
+The server gives your agent 17 tools, grouped into five areas. Your token comes from the client config, so you never pass credentials as a tool argument. When in doubt, start with `get_context`. It tells the agent everything it needs to know about a repo.
 
 ### Workspace
 
@@ -59,14 +59,14 @@ The server gives your agent 16 tools, grouped into five areas. Your token comes 
 | --- | --- | --- |
 | `list_enterprises` | Find the enterprises you can access. | (none) |
 | `list_workspaces` | List the projects in an enterprise, and see which repo each one is linked to. | `enterprise_id`, `kinds?` |
-| `get_workspace_context` | The best place to start. Tells you whether a repo is governed, which rules apply, its coding guidelines, and its latest compliance result. | `workspace_id?` or `repo_url?`, `iac_tool?` |
+| `get_context` | The best place to start. Tells you whether a repo is governed, which rules apply, its coding guidelines, and its latest compliance result. | `workspace_id?` or `repo_url?`, `iac_tool?` |
 
 ### Rulesets
 
 | Tool | What it does | Key inputs |
 | --- | --- | --- |
 | `list_workspace_rulesets` | See every ruleset that could apply to a workspace, including ones it has not turned on yet. | `workspace_id` |
-| `get_ruleset_details` | Read the full text of every rule in a ruleset, including the ones that are turned off. | `workspace_id`, `ruleset_id` |
+| `get_rules` | Read selected rules in one call and retain the selection for setup. | `enterprise_id`, `ruleset_ids` |
 
 ### Compliance
 
@@ -77,14 +77,18 @@ The server gives your agent 16 tools, grouped into five areas. Your token comes 
 | `list_compliance_findings` | See the pass or fail result for each rule in a run. | `workspace_id`, `ref?`, `status?` |
 | `get_compliance_eval_spec` | See the exact instructions the compliance checker follows. | `workspace_id` |
 
+Modules are recommendations, not implicit choices. The agent must explain a clear fit, present alternatives when considering several modules, and ask whether you want to use them before generating module-based code. Selecting an enterprise is not approval to use a module.
+
 ### Enterprise resources
 
 | Tool | What it does | Key inputs |
 | --- | --- | --- |
 | `list_enterprise_resources` | See the rulesets, MCP servers, and workflows an enterprise offers. | `enterprise_id` |
-| `list_modules` | See the approved, reusable infrastructure modules, with their source and version. | `enterprise_id` |
+| `list_modules` | See the approved, reusable infrastructure modules, with their source and version. | `enterprise_id?`, `module_id?` |
 
 ### Version control and setup
+
+`setup_workspace` completes the new-project handoff: pass the drafting context’s `enterprise_id`, `ruleset_ids`, and the pushed `branch`. The remote is detected automatically. A connection choice is only needed when several match. Setup errors retain the workspace ID for recovery; do not retry creation blindly.
 
 | Tool | What it does | Key inputs |
 | --- | --- | --- |
@@ -136,7 +140,7 @@ The server reads its token and API URL from a command flag first, then an enviro
 
 - Missing or invalid token. The server needs `INFRACODEBASE_TOKEN` in its `env`. Generate one at [infracodebase.com/settings/tokens](https://infracodebase.com/settings/tokens).
 - TLS errors against a self-hosted instance. If your instance uses a private certificate authority, set `NODE_EXTRA_CA_CERTS` to the path of your root certificate.
-- `get_workspace_context` returns `unlinked`. No workspace matches the repo yet, so no rulesets are in force. Set the repo up before writing any IaC: pick the enterprise and VCS connection, confirm the repo exists on the provider with `list_vcs_repos`, then `create_workspace` with the right rulesets attached (or `link_workspace_to_repo` for an existing workspace). Doing this first means you write against the rules instead of reworking the code once they attach.
+- `get_context` automatically detects the client Git remote and returns rules, guidelines, and module descriptions in one call. For new projects, select relevant optional rulesets from the returned summaries and call `get_rules` with `enterprise_id` and `ruleset_ids` (or `[]`) to load their full rules without repeating context lookup. Draft locally without workspace setup. Carry `setup.enterprise_id` and `setup.ruleset_ids` into `setup_workspace` once a remote and pushed branch exist. Multiple enterprises require a choice; access failures block generation. Setup reuses an existing workspace or creates one with the selected rules and repository webhook. Existing workspace rules stay authoritative. After pushing, check for an evaluation covering the commit and trigger one if necessary, including when the push preceded webhook setup.
 
 ## CLI
 

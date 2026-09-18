@@ -13,6 +13,7 @@
  *     validation stay in one place.
  */
 
+import { createRepoResolver, gitRemoteUrl, type ResolvedRepo } from "../repo-detect.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { InfracodebaseClient } from "../client.js";
@@ -34,6 +35,7 @@ export interface WorkspaceEntry {
  * helpers share one warm workspace→enterprise map.
  */
 export interface ToolContext {
+  resolveRepoUrl(explicit?: string): Promise<ResolvedRepo>;
   client: InfracodebaseClient;
   /** List every workspace across every accessible enterprise (cache-backed). */
   listAllWorkspaces(): Promise<WorkspaceEntry[]>;
@@ -111,7 +113,16 @@ export function createToolContext(context: ServerContext): ToolContext {
     );
   }
 
-  return { client, listAllWorkspaces, getEnterpriseForWorkspace };
+  return {
+    client,
+    listAllWorkspaces,
+    getEnterpriseForWorkspace,
+    resolveRepoUrl: createRepoResolver({
+      listRoots: context.listRoots ?? (async () => []),
+      cwd: () => process.cwd(),
+      gitRemote: gitRemoteUrl,
+    }),
+  };
 }
 
 /**
