@@ -209,6 +209,13 @@ export class InfracodebaseClient {
     return this.request<unknown>("GET", `/enterprises/${enterpriseId}/resources`);
   }
 
+  async getModuleDetails(enterpriseId: string, moduleId: string, version: string) {
+    return this.request<unknown>(
+      "GET",
+      `/enterprises/${encodeURIComponent(enterpriseId)}/modules/${encodeURIComponent(moduleId)}/versions/${encodeURIComponent(version)}`
+    );
+  }
+
   async listModules(enterpriseId: string) {
     return this.request<unknown>("GET", `/enterprises/${enterpriseId}/modules`);
   }

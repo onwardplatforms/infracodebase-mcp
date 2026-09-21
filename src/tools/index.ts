@@ -24,6 +24,7 @@ import { triggerComplianceEvaluation } from "./trigger_compliance_evaluation.js"
 import { listComplianceFindings } from "./list_compliance_findings.js";
 import { getComplianceEvalSpec } from "./get_compliance_eval_spec.js";
 import { listEnterpriseResources } from "./list_enterprise_resources.js";
+import { getModuleDetails } from "./get_module_details.js";
 import { listModules } from "./list_modules.js";
 import { listVcsConnections } from "./list_vcs_connections.js";
 import { listVcsRepos } from "./list_vcs_repos.js";
@@ -48,6 +49,7 @@ export const TOOLS: ToolDef[] = [
   // Enterprise resources
   listEnterpriseResources,
   listModules,
+  getModuleDetails,
   // Version control
   listVcsConnections,
   listVcsRepos,
