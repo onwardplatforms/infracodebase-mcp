@@ -8,7 +8,8 @@ import { VERSION } from "./version.js";
 
 export interface ClientConfig {
   baseUrl: string;
-  token: string;
+  token?: string;
+  getAccessToken?: () => Promise<string>;
 }
 
 /** Shape of GET /me. Older self-hosted instances may lack the endpoint. */
@@ -21,11 +22,14 @@ export interface Identity {
 
 export class InfracodebaseClient {
   private baseUrl: string;
-  private token: string;
+  private getAccessToken: () => Promise<string>;
 
   constructor(config: ClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, ""); // Remove trailing slash
-    this.token = config.token;
+    if (!config.getAccessToken && !config.token) {
+      throw new Error("An InfraCodebase access-token provider is required.");
+    }
+    this.getAccessToken = config.getAccessToken ?? (async () => config.token as string);
   }
 
   /**
@@ -39,8 +43,9 @@ export class InfracodebaseClient {
     }
   ): Promise<T> {
     const url = `${this.baseUrl}${path}`;
+    const token = await this.getAccessToken();
     const headers: Record<string, string> = {
-      Authorization: `Bearer ${this.token}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       "User-Agent": `@infracodebase/mcp/${VERSION}`,
     };
@@ -327,7 +332,11 @@ const MAX_RAW_BODY = 600;
 function parseErrorBody(body: string): ApiErrorBody | null {
   try {
     const parsed = JSON.parse(body) as unknown;
-    if (parsed && typeof parsed === "object" && typeof (parsed as ApiErrorBody).message === "string") {
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof (parsed as ApiErrorBody).message === "string"
+    ) {
       return parsed as ApiErrorBody;
     }
   } catch {
@@ -367,13 +376,22 @@ function hintFor(status: number, body: ApiErrorBody, baseUrl: string): string | 
  * which only adds noise once the server has answered. Keep the URL for
  * non-JSON bodies, where the usual cause is a wrong INFRACODEBASE_API_URL.
  */
-export function formatApiError(status: number, body: string, path: string, baseUrl: string): string {
+export function formatApiError(
+  status: number,
+  body: string,
+  path: string,
+  baseUrl: string
+): string {
   const parsed = parseErrorBody(body);
   if (!parsed) {
     const raw = body.length > MAX_RAW_BODY ? `${body.slice(0, MAX_RAW_BODY)}…` : body;
     return `API request failed: ${status} ${baseUrl}${path}\n${raw}`;
   }
-  const tag = [parsed.code ?? parsed.type, `HTTP ${status}`, parsed.request_id && `request ${parsed.request_id}`]
+  const tag = [
+    parsed.code ?? parsed.type,
+    `HTTP ${status}`,
+    parsed.request_id && `request ${parsed.request_id}`,
+  ]
     .filter(Boolean)
     .join(", ");
   const param = parsed.param ? ` (param: ${parsed.param})` : "";

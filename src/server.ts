@@ -40,7 +40,7 @@ export async function createServer(config: Config): Promise<{
 
   const client = new InfracodebaseClient({
     baseUrl: config.apiUrl,
-    token: config.apiToken,
+    getAccessToken: config.getAccessToken,
   });
 
   const context: ServerContext = {
@@ -66,7 +66,7 @@ const log = (msg: string) => console.error(`[infracodebase-mcp] ${msg}`);
 
 /**
  * Best-effort auth check at startup. Non-blocking. On success it reports who
- * the token belongs to, so the one line in the client's MCP log is enough to
+ * the session belongs to, so the one line in the client's MCP log is enough to
  * confirm the right account and instance. On failure it distinguishes auth
  * failures (401/403) from connectivity failures (bad host/DNS/network) so the
  * warning points at the right fix. Never prevents startup, so a token that
@@ -83,20 +83,15 @@ async function preflight(client: InfracodebaseClient, apiUrl: string): Promise<v
   } catch (err) {
     const status = (err as { status?: number }).status;
     if (status === 401 || status === 403) {
-      log(`⚠ token rejected (HTTP ${status}) - invalid or expired`);
-      log(`  Check INFRACODEBASE_TOKEN; get a fresh token at ${tokensPage(apiUrl)}`);
+      log(`⚠ session rejected (HTTP ${status}) - sign in again with: infracodebase login`);
     } else {
-      log(`⚠ could not reach ${apiUrl}`);
-      log(`  Wrong endpoint? Set INFRACODEBASE_API_URL (or --api-url) to the correct URL.`);
+      const message = err instanceof Error ? err.message : "";
+      if (message.includes("infracodebase login")) log(`⚠ ${message}`);
+      else {
+        log(`⚠ could not reach ${apiUrl}`);
+        log(`  Wrong endpoint? Set INFRACODEBASE_API_URL (or --api-url) to the correct URL.`);
+      }
     }
-  }
-}
-
-function tokensPage(apiUrl: string): string {
-  try {
-    return `${new URL(apiUrl).origin}/settings/tokens`;
-  } catch {
-    return "https://infracodebase.com/settings/tokens";
   }
 }
 

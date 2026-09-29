@@ -36,7 +36,7 @@ function jsonResponse(body: unknown, status = 200) {
  * tests, and a hardcoded version fails every release.
  */
 const packageVersion = JSON.parse(
-  readFileSync(new URL("../package.json", import.meta.url), "utf-8"),
+  readFileSync(new URL("../package.json", import.meta.url), "utf-8")
 ).version as string;
 
 afterEach(() => {
@@ -63,6 +63,29 @@ describe("InfracodebaseClient — request plumbing", () => {
       Authorization: "Bearer secret",
       "Content-Type": "application/json",
       "User-Agent": `@infracodebase/mcp/${packageVersion}`,
+    });
+  });
+
+  it("gets a fresh bearer token for each request", async () => {
+    const fetchMock = stubFetch(jsonResponse({ data: [] }));
+    fetchMock.mockImplementation(async () => jsonResponse({ data: [] }));
+    const getAccessToken = vi
+      .fn<() => Promise<string>>()
+      .mockResolvedValueOnce("access-1")
+      .mockResolvedValueOnce("access-2");
+    const client = new InfracodebaseClient({
+      baseUrl: "https://api.example.com",
+      getAccessToken,
+    });
+
+    await client.listEnterprises();
+    await client.listEnterprises();
+
+    expect((fetchMock.mock.calls[0][1] as RequestInit).headers).toMatchObject({
+      Authorization: "Bearer access-1",
+    });
+    expect((fetchMock.mock.calls[1][1] as RequestInit).headers).toMatchObject({
+      Authorization: "Bearer access-2",
     });
   });
 
@@ -286,7 +309,12 @@ describe("InfracodebaseClient — query/path building", () => {
 describe("InfracodebaseClient — verifyToken", () => {
   it("returns the caller's identity from /me", async () => {
     const fetchMock = stubFetch(
-      jsonResponse({ id: "user_1", email: "ada@acme.com", name: "Ada", enterprises: [{ id: "ent_1" }] })
+      jsonResponse({
+        id: "user_1",
+        email: "ada@acme.com",
+        name: "Ada",
+        enterprises: [{ id: "ent_1" }],
+      })
     );
     const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
 
@@ -334,9 +362,16 @@ describe("ApiError — message formatting", () => {
     });
 
   it("leads with the API's message and code and drops the URL for a JSON error body", () => {
-    const text = formatApiError(404, envelope(), "/enterprises/e/rulesets/r", "https://api.example.com");
+    const text = formatApiError(
+      404,
+      envelope(),
+      "/enterprises/e/rulesets/r",
+      "https://api.example.com"
+    );
 
-    expect(text).toBe("Ruleset not found in this enterprise. [ruleset_not_found, HTTP 404, request req_1]");
+    expect(text).toBe(
+      "Ruleset not found in this enterprise. [ruleset_not_found, HTTP 404, request req_1]"
+    );
     expect(text).not.toContain("https://");
   });
 
@@ -366,7 +401,11 @@ describe("ApiError — message formatting", () => {
   it("explains a read-only token on a 403 scope error", () => {
     const text = formatApiError(
       403,
-      envelope({ type: "permission_error", code: "insufficient_scope", message: "Insufficient scope: requires 'execute'" }),
+      envelope({
+        type: "permission_error",
+        code: "insufficient_scope",
+        message: "Insufficient scope: requires 'execute'",
+      }),
       "/enterprises/e/workspaces",
       "https://api.example.com"
     );

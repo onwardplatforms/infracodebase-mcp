@@ -9,19 +9,22 @@ Give your AI coding agent access to [infracodebase](https://infracodebase.com) c
 ## Prerequisites
 
 - Node.js 20 or newer
-- An infracodebase account and an access token from [infracodebase.com/settings/tokens](https://infracodebase.com/settings/tokens). Pick **Read and write** if the agent should be able to set repos up; a read-only token can only inspect.
+- An InfraCodebase account with GitHub connected. Enterprise accounts may sign in through Microsoft Entra; SaaS accounts use their normal InfraCodebase sign-in.
 
 ## Quickstart
 
-Get a token, then connect the server to your MCP client. The one-click buttons set up the config for you, and you add your token afterward. If you would rather set it up by hand, use the snippets below. The full guide lives at [infracodebase.com/docs/developers/mcp](https://infracodebase.com/docs/developers/mcp).
+Sign in once through your browser. This creates a renewable InfraCodebase session for the CLI; it does not copy a GitHub token or require a PAT.
 
-[![Add to Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=infracodebase&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkBpbmZyYWNvZGViYXNlL21jcEAyIl0sImVudiI6eyJJTkZSQUNPREVCQVNFX1RPS0VOIjoiaWNiX3BhdF94eHgifX0%3D)
-[![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_Server-0098FF?style=flat&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect?url=vscode%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522infracodebase%2522%252C%2522command%2522%253A%2522npx%2522%252C%2522args%2522%253A%255B%2522-y%2522%252C%2522%2540infracodebase%252Fmcp%25402%2522%255D%252C%2522env%2522%253A%257B%2522INFRACODEBASE_TOKEN%2522%253A%2522%2524%257Binput%253Aicb_token%257D%2522%257D%257D)
+```bash
+npx -y @infracodebase/mcp@2 login
+```
+
+Then connect the server to your MCP client. The full guide lives at [infracodebase.com/docs/developers/mcp](https://infracodebase.com/docs/developers/mcp).
 
 ### Claude Code
 
 ```bash
-claude mcp add infracodebase --scope user --env INFRACODEBASE_TOKEN=icb_pat_xxx -- npx -y @infracodebase/mcp@2
+claude mcp add infracodebase --scope user -- npx -y @infracodebase/mcp@2
 ```
 
 `--scope user` registers the server once for every project. Without it, the server only exists in the directory you ran the command in and shows as disconnected everywhere else.
@@ -35,8 +38,7 @@ Add the server to your `mcp.json`.
   "mcpServers": {
     "infracodebase": {
       "command": "npx",
-      "args": ["-y", "@infracodebase/mcp@2"],
-      "env": { "INFRACODEBASE_TOKEN": "icb_pat_xxx" }
+      "args": ["-y", "@infracodebase/mcp@2"]
     }
   }
 }
@@ -53,7 +55,7 @@ A few terms show up throughout the tools.
 
 ## Tools
 
-The server gives your agent 18 tools, grouped into six areas. Your token comes from the client config, so you never pass credentials as a tool argument. When in doubt, start with `get_workspace_context`. Called with no arguments it detects the repo from the client's workspace root or the directory the server was started in, and tells the agent everything it needs to know about that repo. Read-only tools are annotated as such, so clients that honor MCP annotations can run them without a permission prompt.
+The server gives your agent 18 tools, grouped into six areas. Your saved session is loaded and refreshed locally, so credentials never appear in tool arguments or MCP configuration. When in doubt, start with `get_workspace_context`. Called with no arguments it detects the repo from the client's workspace root or the directory the server was started in, and tells the agent everything it needs to know about that repo. Read-only tools are annotated as such, so clients that honor MCP annotations can run them without a permission prompt.
 
 ### Workspace
 
@@ -119,11 +121,14 @@ Once connected, prompts like these work well.
 
 ## Self-hosted
 
-Add `INFRACODEBASE_API_URL` to the same `env` block, or pass `--api-url`.
+Use the same API URL when you log in and configure the MCP server.
+
+```bash
+npx -y @infracodebase/mcp@2 login --api-url https://infra.your-company.com/api/v1
+```
 
 ```json
 "env": {
-  "INFRACODEBASE_TOKEN": "icb_pat_xxx",
   "INFRACODEBASE_API_URL": "https://infra.your-company.com/api/v1"
 }
 ```
@@ -137,19 +142,19 @@ cd infracodebase-mcp && npm install && npm run build
 
 ## Configuration
 
-The server reads its token and API URL from a command flag first, then an environment variable, then a built-in default. There is no config file to manage. Your MCP client holds these settings and passes them in through `env`. The server talks to your client over stdio, the standard MCP transport, so the client starts the server and exchanges messages on stdin and stdout.
+Browser login stores OAuth credentials in `~/.config/infracodebase/credentials.json` (or under `XDG_CONFIG_HOME`) with mode `0600`. Sessions are scoped per InfraCodebase instance and refresh automatically. Your MCP client only needs the command; self-hosted clients also provide their API URL. The server talks to your client over stdio.
 
 | Flag              | Env var                 | Default                            |
 | ----------------- | ----------------------- | ---------------------------------- |
-| `--token=<token>` | `INFRACODEBASE_TOKEN`   | required                           |
 | `--api-url=<url>` | `INFRACODEBASE_API_URL` | `https://infracodebase.com/api/v1` |
+
+`--token` / `INFRACODEBASE_TOKEN` remains available only as a legacy compatibility override for non-interactive automation.
 
 ## Troubleshooting
 
-- Missing or invalid token. The server needs `INFRACODEBASE_TOKEN` in its `env`. Generate one at [infracodebase.com/settings/tokens](https://infracodebase.com/settings/tokens).
+- Missing or expired session. Run `npx -y @infracodebase/mcp@2 login`. If a browser cannot open, add `--no-open` and open the printed URL yourself.
 - TLS errors against a self-hosted instance. If your instance uses a private certificate authority, set `NODE_EXTRA_CA_CERTS` to the path of your root certificate.
 - `get_workspace_context` returns `unlinked`. No workspace governs the repo yet, so no rulesets are in force. Ask the agent to set the repo up: `plan_workspace_setup` finds the right enterprise and connection, proposes a workspace and rulesets, and lists the decisions that are yours. Once you confirm, `setup_workspace` creates and links the workspace and reloads the rules before any IaC is written.
-- The agent says the token is read-only. Setup tools (create, link, attach rulesets) need a **Read and write** token. Create one at [infracodebase.com/settings/tokens](https://infracodebase.com/settings/tokens) and update `INFRACODEBASE_TOKEN` in your client config.
 
 ## CLI
 
@@ -157,6 +162,8 @@ You rarely run this yourself, since your MCP client starts it for you. When you 
 
 ```bash
 npx -y @infracodebase/mcp@2          # Start the server over stdio (default)
+npx -y @infracodebase/mcp@2 login    # Sign in and save a renewable session
+npx -y @infracodebase/mcp@2 logout   # Remove the saved session
 npx -y @infracodebase/mcp@2 help     # Print full usage
 ```
 

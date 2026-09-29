@@ -5,6 +5,8 @@
  *
  * Usage:
  *   infracodebase            Start the MCP server (stdio transport, default)
+ *   infracodebase login      Sign in through the browser
+ *   infracodebase logout     Remove the saved session for this instance
  *   infracodebase help       Show usage
  *
  * Auth comes from env vars (or flags), supplied by your MCP client's config:
@@ -13,8 +15,10 @@
  */
 
 import { loadConfig, type ConfigOverrides } from "./config.js";
+import { InfracodebaseClient } from "./client.js";
 import { startServer } from "./server.js";
 import { buildUsage } from "./cli/usage.js";
+import { login, logout } from "./oauth.js";
 
 /** Read `--name=value` or `--name value` from argv, returning undefined if absent. */
 function readFlag(argv: string[], name: string): string | undefined {
@@ -28,7 +32,7 @@ function readFlag(argv: string[], name: string): string | undefined {
 
 async function main() {
   const argv = process.argv.slice(2);
-  const command = argv.find((a) => !a.startsWith("-"));
+  const command = argv[0] && !argv[0].startsWith("-") ? argv[0] : undefined;
 
   // Help is also accepted as a flag (--help / -h), not just a command.
   if (command === "help" || argv.includes("--help") || argv.includes("-h")) {
@@ -47,6 +51,31 @@ async function main() {
       case "start": {
         const config = loadConfig(overrides);
         await startServer(config);
+        return;
+      }
+
+      case "login": {
+        const config = loadConfig({ apiUrl: overrides.apiUrl });
+        const noOpen = argv.includes("--no-open");
+        await login(config.apiUrl, {
+          openBrowser: noOpen
+            ? async (url) => {
+                console.error(`Open this URL to continue:\n${url}`);
+              }
+            : undefined,
+        });
+        const me = await new InfracodebaseClient({
+          baseUrl: config.apiUrl,
+          getAccessToken: config.getAccessToken,
+        }).verifyToken();
+        console.error(`Signed in${me.email ? ` as ${me.email}` : ""}.`);
+        return;
+      }
+
+      case "logout": {
+        const config = loadConfig({ apiUrl: overrides.apiUrl });
+        const removed = await logout(config.apiUrl);
+        console.error(removed ? "Signed out." : "No saved login was found.");
         return;
       }
 
