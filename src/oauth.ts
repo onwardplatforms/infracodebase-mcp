@@ -229,6 +229,69 @@ function pkceChallenge(verifier: string): string {
   return crypto.createHash("sha256").update(verifier).digest("base64url");
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function callbackPage(title: string, message: string): string {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escapeHtml(title)}</title>
+    <style>
+      :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      * { box-sizing: border-box; }
+      body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 24px; background: #fafafa; color: #171717; }
+      main { width: min(100%, 420px); padding: 32px; border: 1px solid #e5e5e5; border-radius: 12px; background: #fff; box-shadow: 0 1px 2px rgb(0 0 0 / 0.05); }
+      .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 28px; font-size: 16px; font-weight: 600; }
+      svg { width: 30px; height: 30px; }
+      h1 { margin: 0; font-size: 20px; line-height: 1.3; letter-spacing: -0.02em; }
+      p { margin: 10px 0 0; color: #737373; font-size: 14px; line-height: 1.55; }
+      @media (prefers-color-scheme: dark) {
+        body { background: #0a0a0a; color: #fafafa; }
+        main { border-color: #262626; background: #171717; }
+        p { color: #a3a3a3; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="brand">
+        <svg viewBox="0 0 600 600" fill="none" aria-hidden="true">
+          <path d="M555.523 266.927C537.221 248.2 507.146 248.031 488.635 266.552L272.469 482.83C250.959 504.351 215.983 504.053 194.843 482.169C174.212 460.811 174.513 426.857 195.519 405.868L407.619 193.944C428.738 172.843 428.782 138.625 407.716 117.469C386.579 96.2424 352.221 96.2219 331.058 117.424L115.052 333.834C96.158 352.763 65.5004 352.806 46.5535 333.929L45.2442 332.625C27.3184 314.765 26.9347 285.86 44.3802 267.531C62.442 248.554 92.5973 248.206 111.092 266.761L326.365 482.728C347.897 504.329 382.937 504.144 404.24 482.316C425.141 460.9 424.948 426.662 403.808 405.482L192.965 194.243C171.746 172.984 171.769 138.551 193.017 117.32C214.221 96.1348 248.565 96.0886 269.825 117.217L487.523 333.569C506.55 352.478 537.636 351.728 555.994 332.169C573.227 313.809 573.122 284.936 555.523 266.927Z" stroke="currentColor" stroke-width="45" />
+        </svg>
+        <span>Infracodebase</span>
+      </div>
+      <h1>${escapeHtml(title)}</h1>
+      <p>${escapeHtml(message)}</p>
+    </main>
+  </body>
+</html>`;
+}
+
+function sendCallbackPage(
+  response: http.ServerResponse,
+  status: number,
+  title: string,
+  message: string,
+  onSent: () => void
+): void {
+  response.writeHead(status, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store",
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
+    "X-Content-Type-Options": "nosniff",
+  });
+  response.end(callbackPage(title, message), onSent);
+}
+
 export async function login(apiUrl: string, options: LoginOptions = {}): Promise<void> {
   const origin = instanceOrigin(apiUrl);
   const resource = resourceUrl(apiUrl);
@@ -256,20 +319,32 @@ export async function login(apiUrl: string, options: LoginOptions = {}): Promise
     const oauthError = callbackUrl.searchParams.get("error");
     if (oauthError) {
       const description = callbackUrl.searchParams.get("error_description") || oauthError;
-      response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
-      response.end(`InfraCodebase was not connected: ${description}\nYou can close this window.`);
-      rejectCallback(new Error(description));
+      sendCallbackPage(
+        response,
+        400,
+        "InfraCodebase was not connected",
+        `${description} Return to your terminal and try again.`,
+        () => rejectCallback(new Error(description))
+      );
       return;
     }
     if (!code || returnedState !== state) {
-      response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
-      response.end("This authorization response is invalid. Return to the terminal and try again.");
-      rejectCallback(new Error("The OAuth callback was missing a valid code or state."));
+      sendCallbackPage(
+        response,
+        400,
+        "This sign-in link is invalid",
+        "Return to your terminal and start the sign-in flow again.",
+        () => rejectCallback(new Error("The OAuth callback was missing a valid code or state."))
+      );
       return;
     }
-    response.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
-    response.end("InfraCodebase is connected. You can close this window.");
-    resolveCallback({ code, state: returnedState });
+    sendCallbackPage(
+      response,
+      200,
+      "You’re signed in",
+      "You can close this window and return to your terminal.",
+      () => resolveCallback({ code, state: returnedState })
+    );
   });
 
   await new Promise<void>((resolve, reject) => {

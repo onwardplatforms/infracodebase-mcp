@@ -99,6 +99,8 @@ describe("stored OAuth sessions", () => {
         callback.searchParams.set("state", authorizationUrl.searchParams.get("state")!);
         const response = await fetch(callback);
         expect(response.status).toBe(200);
+        expect(response.headers.get("content-type")).toContain("text/html");
+        expect(await response.text()).toContain("You can close this window");
       },
     });
 
