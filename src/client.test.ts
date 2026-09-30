@@ -130,9 +130,11 @@ describe("InfracodebaseClient — request plumbing", () => {
     expect(err).toBeInstanceOf(ApiError);
     expect(err.status).toBe(403);
     expect(err.body).toBe("forbidden");
-    expect(err.path).toBe("/enterprises/ent_1/workspaces");
+    expect(err.path).toBe("/enterprises/ent_1/workspaces?limit=100");
     expect(err.message).toContain("403");
-    expect(err.message).toContain("https://api.example.com/enterprises/ent_1/workspaces");
+    expect(err.message).toContain(
+      "https://api.example.com/enterprises/ent_1/workspaces?limit=100"
+    );
   });
 });
 
@@ -221,17 +223,19 @@ describe("InfracodebaseClient — query/path building", () => {
     await client.listWorkspaces("ent_1", ["STANDARD", "TEMPLATE", "MODULE"]);
 
     expect(lastCall(fetchMock).url).toBe(
-      "https://api.example.com/enterprises/ent_1/workspaces?kinds=STANDARD%2CTEMPLATE%2CMODULE"
+      "https://api.example.com/enterprises/ent_1/workspaces?limit=100&kinds=STANDARD%2CTEMPLATE%2CMODULE"
     );
   });
 
-  it("omits the kinds query param when none are given", async () => {
+  it("requests the API's maximum page size when no kinds are given", async () => {
     const fetchMock = stubFetch(jsonResponse({ data: [] }));
     const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
 
     await client.listWorkspaces("ent_1");
 
-    expect(lastCall(fetchMock).url).toBe("https://api.example.com/enterprises/ent_1/workspaces");
+    expect(lastCall(fetchMock).url).toBe(
+      "https://api.example.com/enterprises/ent_1/workspaces?limit=100"
+    );
   });
 
   it("requests a workspace's full ruleset list, including unattached ones", async () => {

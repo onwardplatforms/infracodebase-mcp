@@ -120,10 +120,11 @@ export class InfracodebaseClient {
   }
 
   async listWorkspaces(enterpriseId: string, kinds?: string[]) {
-    const query = kinds?.length ? `?kinds=${encodeURIComponent(kinds.join(","))}` : "";
+    const query = new URLSearchParams({ limit: "100" });
+    if (kinds?.length) query.set("kinds", kinds.join(","));
     return this.request<{ data: Array<unknown> }>(
       "GET",
-      `/enterprises/${enterpriseId}/workspaces${query}`
+      `/enterprises/${enterpriseId}/workspaces?${query}`
     );
   }
 
