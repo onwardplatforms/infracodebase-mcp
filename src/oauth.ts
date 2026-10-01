@@ -324,22 +324,29 @@ function pkceChallenge(verifier: string): string {
   return crypto.createHash("sha256").update(verifier).digest("base64url");
 }
 
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
+type CallbackPageKind = "success" | "oauth_error" | "invalid_callback";
 
-function callbackPage(title: string, message: string): string {
+function callbackPage(kind: CallbackPageKind): string {
+  const copy = {
+    success: {
+      title: "You’re signed in",
+      message: "You can close this window and return to your terminal.",
+    },
+    oauth_error: {
+      title: "InfraCodebase wasn’t connected",
+      message: "Return to your terminal for details, then try signing in again.",
+    },
+    invalid_callback: {
+      title: "This sign-in link is invalid",
+      message: "Return to your terminal and start the sign-in flow again.",
+    },
+  }[kind];
   return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>${escapeHtml(title)}</title>
+    <title>${copy.title}</title>
     <style>
       :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
       * { box-sizing: border-box; }
@@ -364,8 +371,8 @@ function callbackPage(title: string, message: string): string {
         </svg>
         <span>Infracodebase</span>
       </div>
-      <h1>${escapeHtml(title)}</h1>
-      <p>${escapeHtml(message)}</p>
+      <h1>${copy.title}</h1>
+      <p>${copy.message}</p>
     </main>
   </body>
 </html>`;
@@ -374,8 +381,7 @@ function callbackPage(title: string, message: string): string {
 function sendCallbackPage(
   response: http.ServerResponse,
   status: number,
-  title: string,
-  message: string,
+  kind: CallbackPageKind,
   onSent: () => void
 ): void {
   response.writeHead(status, {
@@ -384,7 +390,7 @@ function sendCallbackPage(
     "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
     "X-Content-Type-Options": "nosniff",
   });
-  response.end(callbackPage(title, message), onSent);
+  response.end(callbackPage(kind), onSent);
 }
 
 export async function login(apiUrl: string, options: LoginOptions = {}): Promise<void> {
@@ -417,8 +423,7 @@ export async function login(apiUrl: string, options: LoginOptions = {}): Promise
       sendCallbackPage(
         response,
         400,
-        "InfraCodebase was not connected",
-        `${description} Return to your terminal and try again.`,
+        "oauth_error",
         () => rejectCallback(new Error(description))
       );
       return;
@@ -427,8 +432,7 @@ export async function login(apiUrl: string, options: LoginOptions = {}): Promise
       sendCallbackPage(
         response,
         400,
-        "This sign-in link is invalid",
-        "Return to your terminal and start the sign-in flow again.",
+        "invalid_callback",
         () => rejectCallback(new Error("The OAuth callback was missing a valid code or state."))
       );
       return;
@@ -436,8 +440,7 @@ export async function login(apiUrl: string, options: LoginOptions = {}): Promise
     sendCallbackPage(
       response,
       200,
-      "You’re signed in",
-      "You can close this window and return to your terminal.",
+      "success",
       () => resolveCallback({ code, state: returnedState })
     );
   });

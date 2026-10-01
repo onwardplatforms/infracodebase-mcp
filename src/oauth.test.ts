@@ -238,6 +238,40 @@ describe("stored OAuth sessions", () => {
     expect(String(tokenRequest?.[1]?.body)).toContain("code_verifier=");
   });
 
+  it("does not reflect OAuth callback errors into the browser page", async () => {
+    const credentialPath = await temporaryCredentialPath();
+    const maliciousDescription = '<script>alert("xss")</script>';
+    let pageAssertion: Promise<void> | undefined;
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/api/mcp/oauth/register")) {
+        return Response.json({ client_id: "client-1" }, { status: 201 });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    await expect(
+      login("https://example.com/api/v1", {
+        credentialPath,
+        fetch: fetchMock as typeof fetch,
+        openBrowser: async (url) => {
+          const authorizationUrl = new URL(url);
+          const callback = new URL(authorizationUrl.searchParams.get("redirect_uri")!);
+          callback.searchParams.set("error", "access_denied");
+          callback.searchParams.set("error_description", maliciousDescription);
+          pageAssertion = fetch(callback).then(async (response) => {
+            const page = await response.text();
+            expect(response.status).toBe(400);
+            expect(page).toContain("Return to your terminal for details");
+            expect(page).not.toContain(maliciousDescription);
+            expect(page).not.toContain("&lt;script&gt;");
+          });
+        },
+      })
+    ).rejects.toThrow(maliciousDescription);
+    await pageAssertion;
+  });
+
   it("revokes the server grant before removing only the selected instance on logout", async () => {
     const credentialPath = await temporaryCredentialPath();
     await mkdir(path.dirname(credentialPath), { recursive: true });
