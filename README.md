@@ -9,7 +9,7 @@ Give your AI coding agent access to [infracodebase](https://infracodebase.com) c
 ## Prerequisites
 
 - Node.js 20 or newer
-- An InfraCodebase account with GitHub connected. Enterprise accounts may sign in through Microsoft Entra; SaaS accounts use their normal InfraCodebase sign-in.
+- An InfraCodebase account. Enterprise accounts may sign in through Microsoft Entra; SaaS accounts use their normal InfraCodebase sign-in. During login, InfraCodebase guides you to connect a personal version-control account when your enterprise requires one.
 
 ## Quickstart
 
@@ -142,7 +142,7 @@ cd infracodebase-mcp && npm install && npm run build
 
 ## Configuration
 
-Browser login stores OAuth credentials in `~/.config/infracodebase/credentials.json` (or under `XDG_CONFIG_HOME`) with mode `0600`. Sessions are scoped per InfraCodebase instance and refresh automatically. Your MCP client only needs the command; self-hosted clients also provide their API URL. The server talks to your client over stdio.
+Browser login stores OAuth credentials in `~/.config/infracodebase/credentials.json` (or under `XDG_CONFIG_HOME`) with mode `0600`. Sessions are scoped per InfraCodebase instance and refresh automatically. Active sessions remain signed in; login is required again after 90 days without a successful refresh or when access is revoked. Temporary network or service failures are retried and do not remove the saved login. Your MCP client only needs the command; self-hosted clients also provide their API URL. The server talks to your client over stdio.
 
 | Flag              | Env var                 | Default                            |
 | ----------------- | ----------------------- | ---------------------------------- |
@@ -163,7 +163,7 @@ You rarely run this yourself, since your MCP client starts it for you. When you 
 ```bash
 npx -y @infracodebase/mcp@2          # Start the server over stdio (default)
 npx -y @infracodebase/mcp@2 login    # Sign in and save a renewable session
-npx -y @infracodebase/mcp@2 logout   # Remove the saved session
+npx -y @infracodebase/mcp@2 logout   # Revoke and remove the saved session
 npx -y @infracodebase/mcp@2 help     # Print full usage
 ```
 

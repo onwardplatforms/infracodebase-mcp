@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 const REFRESH_SKEW_MS = 60_000;
+const REFRESH_RETRY_DELAYS_MS = [100, 300];
 const LOGIN_TIMEOUT_MS = 5 * 60_000;
 const LOCK_TIMEOUT_MS = 10_000;
 const STALE_LOCK_MS = 30_000;
@@ -15,6 +16,7 @@ interface StoredCredential {
   resource: string;
   accessToken: string;
   refreshToken: string;
+  refreshRecoveryKey?: string;
   expiresAt: number;
 }
 
@@ -27,6 +29,22 @@ interface TokenResponse {
   access_token: string;
   refresh_token: string;
   expires_in: number;
+}
+
+interface OAuthErrorBody {
+  error?: string;
+  error_description?: string;
+}
+
+class OAuthResponseError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly oauthError?: string
+  ) {
+    super(message);
+    this.name = "OAuthResponseError";
+  }
 }
 
 interface RegistrationResponse {
@@ -119,14 +137,32 @@ async function withCredentialLock<T>(filePath: string, operation: () => Promise<
 }
 
 async function responseJson<T>(response: Response, action: string): Promise<T> {
-  const body = (await response.json().catch(() => null)) as
-    | ({ error?: string; error_description?: string } & T)
-    | null;
+  const body = (await response.json().catch(() => null)) as (OAuthErrorBody & T) | null;
   if (!response.ok) {
     const detail = body?.error_description || body?.error || `HTTP ${response.status}`;
-    throw new Error(`${action} failed: ${detail}`);
+    throw new OAuthResponseError(`${action} failed: ${detail}`, response.status, body?.error);
   }
   return body as T;
+}
+
+function isRetryableRefreshError(error: unknown): boolean {
+  if (!(error instanceof OAuthResponseError)) return true;
+  return error.status === 408 || error.status === 425 || error.status === 429 || error.status >= 500;
+}
+
+function requiresNewLogin(error: unknown): boolean {
+  if (!(error instanceof OAuthResponseError)) return false;
+  return (
+    error.oauthError === "invalid_grant" ||
+    error.oauthError === "invalid_client" ||
+    error.oauthError === "invalid_resource" ||
+    error.oauthError === "inactive_user" ||
+    (error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429)
+  );
+}
+
+async function pause(milliseconds: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 async function refreshCredential(
@@ -141,6 +177,7 @@ async function refreshCredential(
     body: new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: credential.refreshToken,
+      refresh_recovery_key: credential.refreshRecoveryKey || "",
       client_id: credential.clientId,
       resource: credential.resource,
     }),
@@ -150,8 +187,28 @@ async function refreshCredential(
     ...credential,
     accessToken: tokens.access_token,
     refreshToken: tokens.refresh_token,
+    refreshRecoveryKey: randomUrlSafe(),
     expiresAt: now() + tokens.expires_in * 1000,
   };
+}
+
+async function refreshCredentialWithRetry(
+  apiUrl: string,
+  credential: StoredCredential,
+  fetchImpl: typeof fetch,
+  now: () => number
+): Promise<StoredCredential> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= REFRESH_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      return await refreshCredential(apiUrl, credential, fetchImpl, now);
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableRefreshError(error) || attempt === REFRESH_RETRY_DELAYS_MS.length) break;
+      await pause(REFRESH_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+  throw lastError;
 }
 
 export function createStoredOAuthTokenProvider(
@@ -174,7 +231,7 @@ export function createStoredOAuthTokenProvider(
 
     return withCredentialLock(filePath, async () => {
       const credentials = await readCredentialFile(filePath);
-      const current = credentials.instances[origin];
+      let current = credentials.instances[origin];
       if (!current) {
         throw new Error(
           `No InfraCodebase login found for ${origin}. Run \`infracodebase login --api-url ${apiUrl}\`.`
@@ -182,10 +239,25 @@ export function createStoredOAuthTokenProvider(
       }
       if (current.expiresAt > now() + REFRESH_SKEW_MS) return current.accessToken;
 
+      // Persist the recovery key before making the request. If the server
+      // commits rotation but the response is lost, the next process can prove
+      // it is retrying the same logical refresh operation.
+      if (!current.refreshRecoveryKey) {
+        current = { ...current, refreshRecoveryKey: randomUrlSafe() };
+        credentials.instances[origin] = current;
+        await writeCredentialFile(filePath, credentials);
+      }
+
       let refreshed: StoredCredential;
       try {
-        refreshed = await refreshCredential(apiUrl, current, fetchImpl, now);
+        refreshed = await refreshCredentialWithRetry(apiUrl, current, fetchImpl, now);
       } catch (error) {
+        if (!requiresNewLogin(error)) {
+          throw new Error(
+            "InfraCodebase could not renew your session right now. Your login is still saved; try again in a moment.",
+            { cause: error }
+          );
+        }
         throw new Error(
           `Your InfraCodebase session has expired. Run \`infracodebase login --api-url ${apiUrl}\` again.`,
           { cause: error }
@@ -200,10 +272,32 @@ export function createStoredOAuthTokenProvider(
 
 export async function logout(apiUrl: string, options: OAuthOptions = {}): Promise<boolean> {
   const filePath = options.credentialPath ?? defaultCredentialPath();
+  const fetchImpl = options.fetch ?? fetch;
   const origin = instanceOrigin(apiUrl);
   return withCredentialLock(filePath, async () => {
     const credentials = await readCredentialFile(filePath);
-    if (!credentials.instances[origin]) return false;
+    const credential = credentials.instances[origin];
+    if (!credential) return false;
+
+    let response: Response;
+    try {
+      response = await fetchImpl(`${origin}/api/mcp/oauth/revoke`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          token: credential.refreshToken,
+          token_type_hint: "refresh_token",
+          client_id: credential.clientId,
+        }),
+      });
+      await responseJson<unknown>(response, "Signing out");
+    } catch (error) {
+      throw new Error(
+        "InfraCodebase could not finish signing you out. Your login is still saved; check your connection and try again.",
+        { cause: error }
+      );
+    }
+
     delete credentials.instances[origin];
     await writeCredentialFile(filePath, credentials);
     return true;
@@ -419,6 +513,7 @@ export async function login(apiUrl: string, options: LoginOptions = {}): Promise
         resource,
         accessToken: tokens.access_token,
         refreshToken: tokens.refresh_token,
+        refreshRecoveryKey: randomUrlSafe(),
         expiresAt: now() + tokens.expires_in * 1000,
       };
       await writeCredentialFile(filePath, credentials);

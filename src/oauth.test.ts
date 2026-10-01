@@ -67,6 +67,124 @@ describe("stored OAuth sessions", () => {
       expiresAt: 610_000,
     });
     expect(String(fetchMock.mock.calls[0][1]?.body)).toContain("refresh_token=old-refresh");
+    expect(String(fetchMock.mock.calls[0][1]?.body)).toMatch(/refresh_recovery_key=[^&]+/);
+  });
+
+  it("retries a transient refresh failure without telling the user to sign in again", async () => {
+    const credentialPath = await temporaryCredentialPath();
+    await mkdir(path.dirname(credentialPath), { recursive: true });
+    await writeFile(
+      credentialPath,
+      JSON.stringify({
+        version: 1,
+        instances: {
+          "https://example.com": {
+            clientId: "client-1",
+            resource: "https://example.com/api/v1",
+            accessToken: "expired-access",
+            refreshToken: "refresh-1",
+            expiresAt: 1,
+          },
+        },
+      })
+    );
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new Error("connection reset"))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            access_token: "new-access",
+            refresh_token: "refresh-2",
+            expires_in: 3600,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
+      );
+
+    const getAccessToken = createStoredOAuthTokenProvider("https://example.com/api/v1", {
+      credentialPath,
+      fetch: fetchMock,
+      now: () => 10_000,
+    });
+
+    await expect(getAccessToken()).resolves.toBe("new-access");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const firstBody = new URLSearchParams(String(fetchMock.mock.calls[0][1]?.body));
+    const retryBody = new URLSearchParams(String(fetchMock.mock.calls[1][1]?.body));
+    expect(retryBody.get("refresh_recovery_key")).toBe(firstBody.get("refresh_recovery_key"));
+  });
+
+  it("preserves the saved login when transient refresh attempts are exhausted", async () => {
+    const credentialPath = await temporaryCredentialPath();
+    await mkdir(path.dirname(credentialPath), { recursive: true });
+    await writeFile(
+      credentialPath,
+      JSON.stringify({
+        version: 1,
+        instances: {
+          "https://example.com": {
+            clientId: "client-1",
+            resource: "https://example.com/api/v1",
+            accessToken: "expired-access",
+            refreshToken: "refresh-1",
+            expiresAt: 1,
+          },
+        },
+      })
+    );
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ error: "temporarily_unavailable" }), {
+        status: 503,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+
+    const getAccessToken = createStoredOAuthTokenProvider("https://example.com/api/v1", {
+      credentialPath,
+      fetch: fetchMock,
+      now: () => 10_000,
+    });
+
+    await expect(getAccessToken()).rejects.toThrow("login is still saved");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const stored = JSON.parse(await readFile(credentialPath, "utf8"));
+    expect(stored.instances["https://example.com"].refreshToken).toBe("refresh-1");
+  });
+
+  it("asks for a new login only when the server rejects the refresh grant", async () => {
+    const credentialPath = await temporaryCredentialPath();
+    await mkdir(path.dirname(credentialPath), { recursive: true });
+    await writeFile(
+      credentialPath,
+      JSON.stringify({
+        version: 1,
+        instances: {
+          "https://example.com": {
+            clientId: "client-1",
+            resource: "https://example.com/api/v1",
+            accessToken: "expired-access",
+            refreshToken: "refresh-1",
+            expiresAt: 1,
+          },
+        },
+      })
+    );
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ error: "invalid_grant" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+
+    const getAccessToken = createStoredOAuthTokenProvider("https://example.com/api/v1", {
+      credentialPath,
+      fetch: fetchMock,
+      now: () => 10_000,
+    });
+
+    await expect(getAccessToken()).rejects.toThrow("session has expired");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("completes PKCE browser login and saves credentials with mode 0600", async () => {
@@ -120,7 +238,7 @@ describe("stored OAuth sessions", () => {
     expect(String(tokenRequest?.[1]?.body)).toContain("code_verifier=");
   });
 
-  it("removes only the selected instance on logout", async () => {
+  it("revokes the server grant before removing only the selected instance on logout", async () => {
     const credentialPath = await temporaryCredentialPath();
     await mkdir(path.dirname(credentialPath), { recursive: true });
     await writeFile(
@@ -128,14 +246,56 @@ describe("stored OAuth sessions", () => {
       JSON.stringify({
         version: 1,
         instances: {
-          "https://one.example": { accessToken: "one" },
+          "https://one.example": {
+            clientId: "client-1",
+            resource: "https://one.example/api/v1",
+            accessToken: "one",
+            refreshToken: "refresh-1",
+            expiresAt: 1,
+          },
           "https://two.example": { accessToken: "two" },
         },
       })
     );
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 }));
 
-    await expect(logout("https://one.example/api/v1", { credentialPath })).resolves.toBe(true);
+    await expect(
+      logout("https://one.example/api/v1", { credentialPath, fetch: fetchMock })
+    ).resolves.toBe(true);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0][0])).toBe("https://one.example/api/mcp/oauth/revoke");
+    const requestBody = new URLSearchParams(String(fetchMock.mock.calls[0][1]?.body));
+    expect(requestBody.get("token")).toBe("refresh-1");
+    expect(requestBody.get("token_type_hint")).toBe("refresh_token");
+    expect(requestBody.get("client_id")).toBe("client-1");
     const saved = JSON.parse(await readFile(credentialPath, "utf8"));
     expect(saved.instances).toEqual({ "https://two.example": { accessToken: "two" } });
+  });
+
+  it("preserves the saved login when server revocation cannot be confirmed", async () => {
+    const credentialPath = await temporaryCredentialPath();
+    await mkdir(path.dirname(credentialPath), { recursive: true });
+    await writeFile(
+      credentialPath,
+      JSON.stringify({
+        version: 1,
+        instances: {
+          "https://one.example": {
+            clientId: "client-1",
+            resource: "https://one.example/api/v1",
+            accessToken: "one",
+            refreshToken: "refresh-1",
+            expiresAt: 1,
+          },
+        },
+      })
+    );
+    const fetchMock = vi.fn<typeof fetch>().mockRejectedValue(new Error("offline"));
+
+    await expect(
+      logout("https://one.example/api/v1", { credentialPath, fetch: fetchMock })
+    ).rejects.toThrow("login is still saved");
+    const saved = JSON.parse(await readFile(credentialPath, "utf8"));
+    expect(saved.instances["https://one.example"].refreshToken).toBe("refresh-1");
   });
 });
