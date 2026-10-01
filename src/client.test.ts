@@ -351,6 +351,24 @@ describe("InfracodebaseClient — verifyToken", () => {
   });
 });
 
+describe("exact module metadata", () => {
+  it("preserves the selected version and returns its complete interface", async () => {
+    const expected = {
+      version: "1.2.3+build",
+      root: {
+        inputs: [{ name: "subnet_id", required: true, default: "" }],
+        outputs: [{ name: "id" }],
+      },
+    };
+    const fetchMock = stubFetch(jsonResponse(expected));
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "test" });
+    expect(await client.getModuleDetails("enterprise", "module", "1.2.3+build")).toEqual(expected);
+    expect(new URL(lastCall(fetchMock).url).pathname).toBe(
+      "/enterprises/enterprise/modules/module/versions/1.2.3%2Bbuild"
+    );
+  });
+});
+
 /**
  * The API returns a documented error envelope whose `message` is marked safe
  * to surface. The agent should read that sentence, not a URL and a JSON blob.
