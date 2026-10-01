@@ -9,16 +9,16 @@
  *   infracodebase logout     Remove the saved session for this instance
  *   infracodebase help       Show usage
  *
- * Auth comes from env vars (or flags), supplied by your MCP client's config:
- *   INFRACODEBASE_TOKEN    / --token=<token>     (required)
+ * Browser login is the default. Environment variables and flags are optional:
  *   INFRACODEBASE_API_URL  / --api-url=<url>     (optional; defaults to SaaS)
+ *   INFRACODEBASE_TOKEN    / --token=<token>     (legacy non-interactive override)
  */
 
 import { loadConfig, type ConfigOverrides } from "./config.js";
 import { InfracodebaseClient } from "./client.js";
 import { startServer } from "./server.js";
 import { buildUsage } from "./cli/usage.js";
-import { login, logout } from "./oauth.js";
+import { createStoredOAuthTokenProvider, login, logout } from "./oauth.js";
 
 /** Read `--name=value` or `--name value` from argv, returning undefined if absent. */
 function readFlag(argv: string[], name: string): string | undefined {
@@ -58,17 +58,20 @@ async function main() {
         const config = loadConfig({ apiUrl: overrides.apiUrl });
         const noOpen = argv.includes("--no-open");
         await login(config.apiUrl, {
-          openBrowser: noOpen
-            ? async (url) => {
-                console.error(`Open this URL to continue:\n${url}`);
-              }
-            : undefined,
+          onAuthorizationUrl: (url) => console.error(`Open this URL to continue:\n${url}`),
+          openBrowser: noOpen ? async () => undefined : undefined,
         });
         const me = await new InfracodebaseClient({
           baseUrl: config.apiUrl,
-          getAccessToken: config.getAccessToken,
+          getAccessToken: createStoredOAuthTokenProvider(config.apiUrl),
+          authKind: "oauth",
         }).verifyToken();
         console.error(`Signed in${me.email ? ` as ${me.email}` : ""}.`);
+        if (process.env.INFRACODEBASE_TOKEN) {
+          console.error(
+            "Warning: INFRACODEBASE_TOKEN is still set and overrides this login. Remove it from your MCP client configuration to use browser login."
+          );
+        }
         return;
       }
 

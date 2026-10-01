@@ -9,6 +9,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { Config } from "./config.js";
 import { InfracodebaseClient } from "./client.js";
+import { AuthSessionError } from "./oauth.js";
 import { SERVER_INSTRUCTIONS } from "./instructions.js";
 import { registerAllTools } from "./tools/index.js";
 import { VERSION } from "./version.js";
@@ -41,6 +42,7 @@ export async function createServer(config: Config): Promise<{
   const client = new InfracodebaseClient({
     baseUrl: config.apiUrl,
     getAccessToken: config.getAccessToken,
+    authKind: config.authKind,
   });
 
   const context: ServerContext = {
@@ -81,16 +83,16 @@ async function preflight(client: InfracodebaseClient, apiUrl: string): Promise<v
       typeof count === "number" ? ` (${count} enterprise${count === 1 ? "" : "s"})` : "";
     log(`Ready - connected to ${apiUrl}${who}${enterprises}`);
   } catch (err) {
+    if (err instanceof AuthSessionError) {
+      log(`⚠ ${err.message}`);
+      return;
+    }
     const status = (err as { status?: number }).status;
     if (status === 401 || status === 403) {
       log(`⚠ session rejected (HTTP ${status}) - sign in again with: infracodebase login`);
     } else {
-      const message = err instanceof Error ? err.message : "";
-      if (message.includes("infracodebase login")) log(`⚠ ${message}`);
-      else {
-        log(`⚠ could not reach ${apiUrl}`);
-        log(`  Wrong endpoint? Set INFRACODEBASE_API_URL (or --api-url) to the correct URL.`);
-      }
+      log(`⚠ could not reach ${apiUrl}`);
+      log(`  Wrong endpoint? Set INFRACODEBASE_API_URL (or --api-url) to the correct URL.`);
     }
   }
 }

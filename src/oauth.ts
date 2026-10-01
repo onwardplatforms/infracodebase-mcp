@@ -10,6 +10,8 @@ const REFRESH_RETRY_DELAYS_MS = [100, 300];
 const LOGIN_TIMEOUT_MS = 5 * 60_000;
 const LOCK_TIMEOUT_MS = 10_000;
 const STALE_LOCK_MS = 30_000;
+const LOCK_HEARTBEAT_MS = 5_000;
+const OAUTH_FETCH_TIMEOUT_MS = 8_000;
 
 interface StoredCredential {
   clientId: string;
@@ -47,6 +49,20 @@ class OAuthResponseError extends Error {
   }
 }
 
+export type AuthSessionErrorKind = "missing" | "expired" | "transient" | "local";
+
+/** A local OAuth-session failure that callers can distinguish from API connectivity failures. */
+export class AuthSessionError extends Error {
+  constructor(
+    readonly kind: AuthSessionErrorKind,
+    message: string,
+    options?: ErrorOptions
+  ) {
+    super(message, options);
+    this.name = "AuthSessionError";
+  }
+}
+
 interface RegistrationResponse {
   client_id: string;
 }
@@ -59,6 +75,7 @@ export interface OAuthOptions {
 
 export interface LoginOptions extends OAuthOptions {
   openBrowser?: (url: string) => Promise<void>;
+  onAuthorizationUrl?: (url: string) => void;
   timeoutMs?: number;
 }
 
@@ -86,17 +103,23 @@ async function readCredentialFile(filePath: string): Promise<CredentialFile> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return { version: 1, instances: {} };
     }
-    throw new Error(
+    throw new AuthSessionError(
+      "local",
       `Could not read InfraCodebase credentials at ${filePath}. Run \`infracodebase login\` again.`,
       { cause: error }
     );
   }
 }
 
-async function writeCredentialFile(filePath: string, value: CredentialFile): Promise<void> {
+async function ensureCredentialDirectory(filePath: string): Promise<void> {
   const directory = path.dirname(filePath);
+  await fs.mkdir(path.dirname(directory), { recursive: true });
   await fs.mkdir(directory, { recursive: true, mode: 0o700 });
   await fs.chmod(directory, 0o700);
+}
+
+async function writeCredentialFile(filePath: string, value: CredentialFile): Promise<void> {
+  await ensureCredentialDirectory(filePath);
   const temporaryPath = `${filePath}.${process.pid}.${crypto.randomBytes(6).toString("hex")}.tmp`;
   try {
     await fs.writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
@@ -110,26 +133,54 @@ async function writeCredentialFile(filePath: string, value: CredentialFile): Pro
 async function withCredentialLock<T>(filePath: string, operation: () => Promise<T>): Promise<T> {
   const lockPath = `${filePath}.lock`;
   const startedAt = Date.now();
-  await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  await ensureCredentialDirectory(filePath);
 
   while (true) {
+    const ownerId = randomUrlSafe();
     try {
       const handle = await fs.open(lockPath, "wx", 0o600);
+      await handle.writeFile(ownerId);
+      const heartbeat = setInterval(() => {
+        void fs
+          .readFile(lockPath, "utf8")
+          .then((owner) =>
+            owner === ownerId ? fs.utimes(lockPath, new Date(), new Date()) : undefined
+          )
+          .catch(() => undefined);
+      }, LOCK_HEARTBEAT_MS);
+      heartbeat.unref();
       try {
         return await operation();
       } finally {
+        clearInterval(heartbeat);
         await handle.close();
-        await fs.unlink(lockPath).catch(() => undefined);
+        const owner = await fs.readFile(lockPath, "utf8").catch(() => null);
+        if (owner === ownerId) await fs.unlink(lockPath).catch(() => undefined);
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       const stat = await fs.stat(lockPath).catch(() => null);
       if (stat && Date.now() - stat.mtimeMs > STALE_LOCK_MS) {
-        await fs.unlink(lockPath).catch(() => undefined);
+        const staleOwner = await fs.readFile(lockPath, "utf8").catch(() => null);
+        const currentStat = await fs.stat(lockPath).catch(() => null);
+        const currentOwner = await fs.readFile(lockPath, "utf8").catch(() => null);
+        if (
+          staleOwner !== null &&
+          staleOwner === currentOwner &&
+          currentStat &&
+          Date.now() - currentStat.mtimeMs > STALE_LOCK_MS
+        ) {
+          const stalePath = `${lockPath}.stale.${process.pid}.${randomUrlSafe(6)}`;
+          await fs.rename(lockPath, stalePath).catch(() => undefined);
+          await fs.unlink(stalePath).catch(() => undefined);
+        }
         continue;
       }
       if (Date.now() - startedAt >= LOCK_TIMEOUT_MS) {
-        throw new Error("InfraCodebase credentials are busy. Wait a moment and try again.");
+        throw new AuthSessionError(
+          "local",
+          "InfraCodebase credentials are busy. Wait a moment and try again."
+        );
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
@@ -139,7 +190,9 @@ async function withCredentialLock<T>(filePath: string, operation: () => Promise<
 async function responseJson<T>(response: Response, action: string): Promise<T> {
   const body = (await response.json().catch(() => null)) as (OAuthErrorBody & T) | null;
   if (!response.ok) {
-    const detail = body?.error_description || body?.error || `HTTP ${response.status}`;
+    const detail = terminalSafe(
+      body?.error_description || body?.error || `HTTP ${response.status}`
+    );
     throw new OAuthResponseError(`${action} failed: ${detail}`, response.status, body?.error);
   }
   return body as T;
@@ -173,6 +226,7 @@ async function refreshCredential(
 ): Promise<StoredCredential> {
   const response = await fetchImpl(`${instanceOrigin(apiUrl)}/api/mcp/oauth/token`, {
     method: "POST",
+    signal: AbortSignal.timeout(OAUTH_FETCH_TIMEOUT_MS),
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       grant_type: "refresh_token",
@@ -223,7 +277,8 @@ export function createStoredOAuthTokenProvider(
   return async () => {
     const initial = (await readCredentialFile(filePath)).instances[origin];
     if (!initial) {
-      throw new Error(
+      throw new AuthSessionError(
+        "missing",
         `No InfraCodebase login found for ${origin}. Run \`infracodebase login --api-url ${apiUrl}\`.`
       );
     }
@@ -233,7 +288,8 @@ export function createStoredOAuthTokenProvider(
       const credentials = await readCredentialFile(filePath);
       let current = credentials.instances[origin];
       if (!current) {
-        throw new Error(
+        throw new AuthSessionError(
+          "missing",
           `No InfraCodebase login found for ${origin}. Run \`infracodebase login --api-url ${apiUrl}\`.`
         );
       }
@@ -253,12 +309,14 @@ export function createStoredOAuthTokenProvider(
         refreshed = await refreshCredentialWithRetry(apiUrl, current, fetchImpl, now);
       } catch (error) {
         if (!requiresNewLogin(error)) {
-          throw new Error(
+          throw new AuthSessionError(
+            "transient",
             "InfraCodebase could not renew your session right now. Your login is still saved; try again in a moment.",
             { cause: error }
           );
         }
-        throw new Error(
+        throw new AuthSessionError(
+          "expired",
           `Your InfraCodebase session has expired. Run \`infracodebase login --api-url ${apiUrl}\` again.`,
           { cause: error }
         );
@@ -284,6 +342,7 @@ export async function logout(apiUrl: string, options: OAuthOptions = {}): Promis
       response = await fetchImpl(`${origin}/api/mcp/oauth/revoke`, {
         method: "POST",
         redirect: "manual",
+        signal: AbortSignal.timeout(OAUTH_FETCH_TIMEOUT_MS),
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
           token: credential.refreshToken,
@@ -293,6 +352,16 @@ export async function logout(apiUrl: string, options: OAuthOptions = {}): Promis
       });
       await responseJson<unknown>(response, "Signing out");
     } catch (error) {
+      if (
+        error instanceof OAuthResponseError &&
+        (error.status === 401 ||
+          error.oauthError === "invalid_grant" ||
+          error.oauthError === "invalid_token")
+      ) {
+        delete credentials.instances[origin];
+        await writeCredentialFile(filePath, credentials);
+        return true;
+      }
       throw new Error(
         "InfraCodebase could not finish signing you out. Your login is still saved; check your connection and try again.",
         { cause: error }
@@ -310,10 +379,16 @@ async function launchBrowser(url: string): Promise<void> {
     process.platform === "darwin"
       ? ["open", [url]]
       : process.platform === "win32"
-        ? ["cmd", ["/c", "start", "", url]]
+        ? ["rundll32.exe", ["url.dll,FileProtocolHandler", url]]
         : ["xdg-open", [url]];
   const child = spawn(command, args, { detached: true, stdio: "ignore" });
-  child.unref();
+  await new Promise<void>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.unref();
+      resolve();
+    });
+  });
 }
 
 function randomUrlSafe(bytes = 32): string {
@@ -322,6 +397,16 @@ function randomUrlSafe(bytes = 32): string {
 
 function pkceChallenge(verifier: string): string {
   return crypto.createHash("sha256").update(verifier).digest("base64url");
+}
+
+function terminalSafe(value: string): string {
+  let safe = "";
+  for (const character of value) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code >= 0x20 && code !== 0x7f && (code < 0x80 || code > 0x9f)) safe += character;
+    if (safe.length >= 500) break;
+  }
+  return safe.slice(0, 500);
 }
 
 type CallbackPageKind = "success" | "oauth_error" | "invalid_callback";
@@ -418,8 +503,14 @@ export async function login(apiUrl: string, options: LoginOptions = {}): Promise
     const returnedState = callbackUrl.searchParams.get("state") || "";
     const code = callbackUrl.searchParams.get("code") || "";
     const oauthError = callbackUrl.searchParams.get("error");
+    if (returnedState !== state) {
+      sendCallbackPage(response, 400, "invalid_callback", () => undefined);
+      return;
+    }
     if (oauthError) {
-      const description = callbackUrl.searchParams.get("error_description") || oauthError;
+      const description = terminalSafe(
+        callbackUrl.searchParams.get("error_description") || oauthError
+      );
       sendCallbackPage(
         response,
         400,
@@ -428,7 +519,7 @@ export async function login(apiUrl: string, options: LoginOptions = {}): Promise
       );
       return;
     }
-    if (!code || returnedState !== state) {
+    if (!code) {
       sendCallbackPage(
         response,
         400,
@@ -456,6 +547,7 @@ export async function login(apiUrl: string, options: LoginOptions = {}): Promise
     const redirectUri = `http://127.0.0.1:${address.port}/oauth/callback`;
     const registrationResponse = await fetchImpl(`${origin}/api/mcp/oauth/register`, {
       method: "POST",
+      signal: AbortSignal.timeout(OAUTH_FETCH_TIMEOUT_MS),
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         client_name: "InfraCodebase CLI",
@@ -482,7 +574,9 @@ export async function login(apiUrl: string, options: LoginOptions = {}): Promise
       code_challenge_method: "S256",
     }).toString();
 
-    await (options.openBrowser ?? launchBrowser)(authorizationUrl.toString());
+    const authorizationUrlString = authorizationUrl.toString();
+    options.onAuthorizationUrl?.(authorizationUrlString);
+    await (options.openBrowser ?? launchBrowser)(authorizationUrlString).catch(() => undefined);
     const timeoutMs = options.timeoutMs ?? LOGIN_TIMEOUT_MS;
     let timeout: NodeJS.Timeout | undefined;
     const result = await Promise.race([
@@ -499,6 +593,7 @@ export async function login(apiUrl: string, options: LoginOptions = {}): Promise
 
     const tokenResponse = await fetchImpl(`${origin}/api/mcp/oauth/token`, {
       method: "POST",
+      signal: AbortSignal.timeout(OAUTH_FETCH_TIMEOUT_MS),
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         grant_type: "authorization_code",

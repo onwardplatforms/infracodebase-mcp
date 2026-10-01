@@ -10,6 +10,7 @@ export interface ClientConfig {
   baseUrl: string;
   token?: string;
   getAccessToken?: () => Promise<string>;
+  authKind?: "oauth" | "legacy_token";
 }
 
 /** Shape of GET /me. Older self-hosted instances may lack the endpoint. */
@@ -23,6 +24,7 @@ export interface Identity {
 export class InfracodebaseClient {
   private baseUrl: string;
   private getAccessToken: () => Promise<string>;
+  private authKind: "oauth" | "legacy_token";
 
   constructor(config: ClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, ""); // Remove trailing slash
@@ -30,6 +32,7 @@ export class InfracodebaseClient {
       throw new Error("An InfraCodebase access-token provider is required.");
     }
     this.getAccessToken = config.getAccessToken ?? (async () => config.token as string);
+    this.authKind = config.authKind ?? (config.token ? "legacy_token" : "oauth");
   }
 
   /**
@@ -58,7 +61,7 @@ export class InfracodebaseClient {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new ApiError(response.status, errorText, path, this.baseUrl);
+      throw new ApiError(response.status, errorText, path, this.baseUrl, this.authKind);
     }
 
     return (await response.json()) as T;
@@ -346,24 +349,30 @@ function parseErrorBody(body: string): ApiErrorBody | null {
   return null;
 }
 
-/** Where to mint a token on this instance (self-hosted users get their own host). */
-function tokensUrl(baseUrl: string): string {
+function instanceOrigin(baseUrl: string): string {
   try {
-    return `${new URL(baseUrl).origin}/settings/tokens`;
+    return new URL(baseUrl).origin;
   } catch {
-    return "https://infracodebase.com/settings/tokens";
+    return "https://infracodebase.com";
   }
 }
 
-function hintFor(status: number, body: ApiErrorBody, baseUrl: string): string | null {
+function hintFor(
+  status: number,
+  body: ApiErrorBody,
+  baseUrl: string,
+  authKind: "oauth" | "legacy_token"
+): string | null {
+  const origin = instanceOrigin(baseUrl);
   if (status === 401) {
-    return `The token was rejected. Check INFRACODEBASE_TOKEN in the MCP client config, or create a new token at ${tokensUrl(baseUrl)}.`;
+    return authKind === "oauth"
+      ? `Your login is no longer valid. Run \`infracodebase login --api-url ${baseUrl}\` to reconnect.`
+      : `The token was rejected. Check INFRACODEBASE_TOKEN in the MCP client config, or create a new token at ${origin}/settings/tokens.`;
   }
   if (status === 403 && /requires 'execute'/i.test(body.message ?? "")) {
-    return (
-      `This token is read-only. Creating or linking workspaces and attaching rulesets need a ` +
-      `"Read and write" token from ${tokensUrl(baseUrl)}; ask the user to create one and update INFRACODEBASE_TOKEN.`
-    );
+    return authKind === "oauth"
+      ? `This login does not include write access. Run \`infracodebase login --api-url ${baseUrl}\` again to reconnect.`
+      : `This token is read-only. Creating or linking workspaces and attaching rulesets need a "Read and write" token from ${origin}/settings/tokens; ask the user to create one and update INFRACODEBASE_TOKEN.`;
   }
   if (status === 429) return "Rate limited. Wait before retrying.";
   return null;
@@ -381,7 +390,8 @@ export function formatApiError(
   status: number,
   body: string,
   path: string,
-  baseUrl: string
+  baseUrl: string,
+  authKind: "oauth" | "legacy_token" = "legacy_token"
 ): string {
   const parsed = parseErrorBody(body);
   if (!parsed) {
@@ -397,7 +407,7 @@ export function formatApiError(
     .join(", ");
   const param = parsed.param ? ` (param: ${parsed.param})` : "";
   const head = `${parsed.message}${param} [${tag}]`;
-  const hint = hintFor(status, parsed, baseUrl);
+  const hint = hintFor(status, parsed, baseUrl, authKind);
   return hint ? `${head}\n${hint}` : head;
 }
 
@@ -410,9 +420,10 @@ export class ApiError extends Error {
     public status: number,
     public body: string,
     public path: string,
-    public baseUrl = ""
+    public baseUrl = "",
+    authKind: "oauth" | "legacy_token" = "legacy_token"
   ) {
-    super(formatApiError(status, body, path, baseUrl));
+    super(formatApiError(status, body, path, baseUrl, authKind));
     this.name = "ApiError";
     const parsed = parseErrorBody(body);
     this.code = parsed?.code;

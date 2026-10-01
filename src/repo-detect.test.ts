@@ -23,6 +23,24 @@ describe("createRepoResolver", () => {
     expect(d.gitRemote).not.toHaveBeenCalled();
   });
 
+  it("removes embedded HTTP credentials from explicit and detected remotes", async () => {
+    const explicitDeps = deps();
+    await expect(
+      createRepoResolver(explicitDeps)("https://user:ghp_secret@github.com/acme/infra.git")
+    ).resolves.toEqual({
+      repo_url: "https://github.com/acme/infra.git",
+      resolved_from: "argument",
+    });
+
+    const detectedDeps = deps({
+      gitRemote: vi.fn(async () => "https://token:secret@gitlab.com/acme/infra.git"),
+    });
+    await expect(createRepoResolver(detectedDeps)()).resolves.toEqual({
+      repo_url: "https://gitlab.com/acme/infra.git",
+      resolved_from: "cwd",
+    });
+  });
+
   it("prefers a client root, converting its file:// URI to a path", async () => {
     const d = deps({
       listRoots: vi.fn(async () => ["file:///Users/ada/infra"]),

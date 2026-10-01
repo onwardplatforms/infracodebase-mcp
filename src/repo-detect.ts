@@ -60,9 +60,24 @@ function toPath(root: string): string | null {
   return root.startsWith("/") ? root : null;
 }
 
+/** Remove HTTP(S) userinfo before a remote URL leaves the local machine. */
+export function sanitizeRepoUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return value;
+    url.username = "";
+    url.password = "";
+    return url.toString();
+  } catch {
+    // SCP-style SSH remotes (git@host:owner/repo.git) are not WHATWG URLs and
+    // contain an account name, not an HTTP credential.
+    return value;
+  }
+}
+
 export function createRepoResolver(deps: RepoDetectDeps) {
   return async function resolveRepoUrl(explicit?: string): Promise<ResolvedRepo> {
-    if (explicit) return { repo_url: explicit, resolved_from: "argument" };
+    if (explicit) return { repo_url: sanitizeRepoUrl(explicit), resolved_from: "argument" };
 
     let roots: string[] = [];
     try {
@@ -73,12 +88,12 @@ export function createRepoResolver(deps: RepoDetectDeps) {
     const rootDirs = roots.map(toPath).filter((d): d is string => d !== null);
     for (const dir of rootDirs) {
       const url = await deps.gitRemote(dir);
-      if (url) return { repo_url: url, resolved_from: "roots" };
+      if (url) return { repo_url: sanitizeRepoUrl(url), resolved_from: "roots" };
     }
 
     const cwd = deps.cwd();
     const cwdUrl = await deps.gitRemote(cwd);
-    if (cwdUrl) return { repo_url: cwdUrl, resolved_from: "cwd" };
+    if (cwdUrl) return { repo_url: sanitizeRepoUrl(cwdUrl), resolved_from: "cwd" };
 
     const checked = [...rootDirs, cwd].join(", ");
     throw new Error(

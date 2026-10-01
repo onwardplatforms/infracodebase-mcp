@@ -402,6 +402,20 @@ describe("ApiError — message formatting", () => {
     expect(text).toContain("https://infra.acme.com/settings/tokens");
   });
 
+  it("directs OAuth users to browser login instead of a PAT on 401", () => {
+    const text = formatApiError(
+      401,
+      envelope({ type: "authentication_error", code: "unauthorized", message: "Invalid token." }),
+      "/me",
+      "https://infra.acme.com/api/v1",
+      "oauth"
+    );
+
+    expect(text).toContain("infracodebase login --api-url https://infra.acme.com/api/v1");
+    expect(text).not.toContain("INFRACODEBASE_TOKEN");
+    expect(text).not.toContain("/settings/tokens");
+  });
+
   it("explains a read-only token on a 403 scope error", () => {
     const text = formatApiError(
       403,
@@ -416,6 +430,24 @@ describe("ApiError — message formatting", () => {
 
     expect(text).toContain("This token is read-only");
     expect(text).toContain('"Read and write" token');
+  });
+
+  it("directs OAuth users to reconnect when their login lacks write access", () => {
+    const text = formatApiError(
+      403,
+      envelope({
+        type: "permission_error",
+        code: "insufficient_scope",
+        message: "Insufficient scope: requires 'execute'",
+      }),
+      "/enterprises/e/workspaces",
+      "https://api.example.com",
+      "oauth"
+    );
+
+    expect(text).toContain("This login does not include write access");
+    expect(text).toContain("infracodebase login");
+    expect(text).not.toContain("INFRACODEBASE_TOKEN");
   });
 
   it("keeps the URL and truncates the body when the response is not JSON", () => {
