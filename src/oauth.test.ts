@@ -264,6 +264,7 @@ describe("stored OAuth sessions", () => {
     ).resolves.toBe(true);
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(String(fetchMock.mock.calls[0][0])).toBe("https://one.example/api/mcp/oauth/revoke");
+    expect(fetchMock.mock.calls[0][1]?.redirect).toBe("manual");
     const requestBody = new URLSearchParams(String(fetchMock.mock.calls[0][1]?.body));
     expect(requestBody.get("token")).toBe("refresh-1");
     expect(requestBody.get("token_type_hint")).toBe("refresh_token");

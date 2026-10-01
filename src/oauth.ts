@@ -283,6 +283,7 @@ export async function logout(apiUrl: string, options: OAuthOptions = {}): Promis
     try {
       response = await fetchImpl(`${origin}/api/mcp/oauth/revoke`, {
         method: "POST",
+        redirect: "manual",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
           token: credential.refreshToken,
