@@ -8,16 +8,31 @@ import { VERSION } from "./version.js";
 
 export interface ClientConfig {
   baseUrl: string;
-  token: string;
+  token?: string;
+  getAccessToken?: () => Promise<string>;
+  authKind?: "oauth" | "legacy_token";
+}
+
+/** Shape of GET /me. Older self-hosted instances may lack the endpoint. */
+export interface Identity {
+  id?: string;
+  email?: string;
+  name?: string | null;
+  enterprises: Array<{ id?: string; name?: string; slug?: string }>;
 }
 
 export class InfracodebaseClient {
   private baseUrl: string;
-  private token: string;
+  private getAccessToken: () => Promise<string>;
+  private authKind: "oauth" | "legacy_token";
 
   constructor(config: ClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, ""); // Remove trailing slash
-    this.token = config.token;
+    if (!config.getAccessToken && !config.token) {
+      throw new Error("An InfraCodebase access-token provider is required.");
+    }
+    this.getAccessToken = config.getAccessToken ?? (async () => config.token as string);
+    this.authKind = config.authKind ?? (config.token ? "legacy_token" : "oauth");
   }
 
   /**
@@ -31,8 +46,9 @@ export class InfracodebaseClient {
     }
   ): Promise<T> {
     const url = `${this.baseUrl}${path}`;
+    const token = await this.getAccessToken();
     const headers: Record<string, string> = {
-      Authorization: `Bearer ${this.token}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       "User-Agent": `@infracodebase/mcp/${VERSION}`,
     };
@@ -45,10 +61,36 @@ export class InfracodebaseClient {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new ApiError(response.status, errorText, path, this.baseUrl);
+      throw new ApiError(response.status, errorText, path, this.baseUrl, this.authKind);
     }
 
     return (await response.json()) as T;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Identity
+  // ---------------------------------------------------------------------------
+
+  async getMe() {
+    return this.request<Identity>("GET", "/me");
+  }
+
+  /**
+   * Verify the token works and learn who it belongs to, so the startup log can
+   * say "connected as ada@acme.com (2 enterprises)" instead of just "Ready".
+   * Falls back to the enterprise list on instances that predate /me. Throws
+   * ApiError (401/403/...) on an invalid or expired token.
+   */
+  async verifyToken(): Promise<Identity> {
+    try {
+      return await this.getMe();
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 404 || err.status === 501)) {
+        const res = await this.listEnterprises();
+        return { enterprises: (res.data as Identity["enterprises"]) ?? [] };
+      }
+      throw err;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -80,21 +122,12 @@ export class InfracodebaseClient {
     return this.request<{ data: Array<unknown> }>("GET", "/enterprises");
   }
 
-  /**
-   * Verify the token works by hitting an authenticated endpoint.
-   * Returns the caller's enterprises so the CLI can confirm who they are.
-   * Throws ApiError (401/403/...) on an invalid or expired token.
-   */
-  async verifyToken(): Promise<Array<{ id?: string; name?: string }>> {
-    const res = await this.listEnterprises();
-    return (res.data as Array<{ id?: string; name?: string }>) ?? [];
-  }
-
   async listWorkspaces(enterpriseId: string, kinds?: string[]) {
-    const query = kinds?.length ? `?kinds=${encodeURIComponent(kinds.join(","))}` : "";
+    const query = new URLSearchParams({ limit: "100" });
+    if (kinds?.length) query.set("kinds", kinds.join(","));
     return this.request<{ data: Array<unknown> }>(
       "GET",
-      `/enterprises/${enterpriseId}/workspaces${query}`
+      `/enterprises/${enterpriseId}/workspaces?${query}`
     );
   }
 
@@ -285,15 +318,115 @@ export class InfracodebaseClient {
   }
 }
 
+// -----------------------------------------------------------------------------
+// Errors
+// -----------------------------------------------------------------------------
+
+/** The documented v1 error envelope (lib/api/v1/primitives.ts ErrorResponse). */
+interface ApiErrorBody {
+  type?: string;
+  code?: string;
+  message?: string;
+  param?: string;
+  request_id?: string;
+}
+
+const MAX_RAW_BODY = 600;
+
+function parseErrorBody(body: string): ApiErrorBody | null {
+  try {
+    const parsed = JSON.parse(body) as unknown;
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof (parsed as ApiErrorBody).message === "string"
+    ) {
+      return parsed as ApiErrorBody;
+    }
+  } catch {
+    // Not JSON: a proxy page, an HTML 404 from a wrong API URL, or plain text.
+  }
+  return null;
+}
+
+function instanceOrigin(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).origin;
+  } catch {
+    return "https://infracodebase.com";
+  }
+}
+
+function hintFor(
+  status: number,
+  body: ApiErrorBody,
+  baseUrl: string,
+  authKind: "oauth" | "legacy_token"
+): string | null {
+  const origin = instanceOrigin(baseUrl);
+  if (status === 401) {
+    return authKind === "oauth"
+      ? `Your login is no longer valid. Run \`infracodebase login --api-url ${baseUrl}\` to reconnect.`
+      : `The token was rejected. Check INFRACODEBASE_TOKEN in the MCP client config, or create a new token at ${origin}/settings/tokens.`;
+  }
+  if (status === 403 && /requires 'execute'/i.test(body.message ?? "")) {
+    return authKind === "oauth"
+      ? `This login does not include write access. Run \`infracodebase login --api-url ${baseUrl}\` again to reconnect.`
+      : `This token is read-only. Creating or linking workspaces and attaching rulesets need a "Read and write" token from ${origin}/settings/tokens; ask the user to create one and update INFRACODEBASE_TOKEN.`;
+  }
+  if (status === 429) return "Rate limited. Wait before retrying.";
+  return null;
+}
+
+/**
+ * Turn an HTTP failure into the sentence the agent (and the user) should see.
+ *
+ * The API already returns a `message` it marks safe to surface, plus a stable
+ * `code` and a `request_id` for support. Lead with those and drop the URL,
+ * which only adds noise once the server has answered. Keep the URL for
+ * non-JSON bodies, where the usual cause is a wrong INFRACODEBASE_API_URL.
+ */
+export function formatApiError(
+  status: number,
+  body: string,
+  path: string,
+  baseUrl: string,
+  authKind: "oauth" | "legacy_token" = "legacy_token"
+): string {
+  const parsed = parseErrorBody(body);
+  if (!parsed) {
+    const raw = body.length > MAX_RAW_BODY ? `${body.slice(0, MAX_RAW_BODY)}…` : body;
+    return `API request failed: ${status} ${baseUrl}${path}\n${raw}`;
+  }
+  const tag = [
+    parsed.code ?? parsed.type,
+    `HTTP ${status}`,
+    parsed.request_id && `request ${parsed.request_id}`,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  const param = parsed.param ? ` (param: ${parsed.param})` : "";
+  const head = `${parsed.message}${param} [${tag}]`;
+  const hint = hintFor(status, parsed, baseUrl, authKind);
+  return hint ? `${head}\n${hint}` : head;
+}
+
 export class ApiError extends Error {
+  /** Stable machine-readable code from the API envelope, when the body was JSON. */
+  public code?: string;
+  public requestId?: string;
+
   constructor(
     public status: number,
     public body: string,
     public path: string,
-    public baseUrl = ""
+    public baseUrl = "",
+    authKind: "oauth" | "legacy_token" = "legacy_token"
   ) {
-    // Include the host so a misconfigured API URL is diagnosable from the message.
-    super(`API request failed: ${status} ${baseUrl}${path}\n${body}`);
+    super(formatApiError(status, body, path, baseUrl, authKind));
     this.name = "ApiError";
+    const parsed = parseErrorBody(body);
+    this.code = parsed?.code;
+    this.requestId = parsed?.request_id;
   }
 }

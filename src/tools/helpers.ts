@@ -2,22 +2,24 @@
  * Shared plumbing for the per-tool modules.
  *
  * Each tool lives in its own file and exports a `ToolDef` (see the sibling
- * `*.ts` files and the registry in `index.ts`). This module owns the three
- * things every tool needs but shouldn't re-implement:
+ * `*.ts` files and the registry in `index.ts`). This module owns the things
+ * every tool needs but shouldn't re-implement:
  *
- *   - `ToolContext` — the API client plus the workspace→enterprise resolution
- *     helpers, built once per server via `createToolContext`.
+ *   - `ToolContext` — the API client, the workspace→enterprise resolution
+ *     helpers, and the repo auto-detector, built once per server via
+ *     `createToolContext`.
  *   - `registerTool` — wires a `ToolDef` onto the McpServer with a shared
- *     try/catch and JSON formatting. Description and input schema come from
- *     `validation.ts` by name, so the tools/list output and argument
- *     validation stay in one place.
+ *     try/catch and JSON formatting. Description, input schema, and
+ *     annotations come from `validation.ts` by name, so the tools/list output
+ *     and argument validation stay in one place.
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { InfracodebaseClient } from "../client.js";
 import type { ServerContext } from "../server.js";
-import { TOOL_SHAPES, TOOL_DESCRIPTIONS, type ToolName } from "./validation.js";
+import { createRepoResolver, gitRemoteUrl, type ResolvedRepo } from "../repo-detect.js";
+import { TOOL_SHAPES, TOOL_DESCRIPTIONS, TOOL_ANNOTATIONS, type ToolName } from "./validation.js";
 
 export type Args = Record<string, any>;
 
@@ -30,8 +32,8 @@ export interface WorkspaceEntry {
 
 /**
  * Everything a tool handler is handed: the API client plus the shared
- * workspace→enterprise resolution helpers. Built once per server so the
- * helpers share one warm workspace→enterprise map.
+ * resolution helpers. Built once per server so the helpers share one warm
+ * workspace→enterprise map.
  */
 export interface ToolContext {
   client: InfracodebaseClient;
@@ -39,12 +41,18 @@ export interface ToolContext {
   listAllWorkspaces(): Promise<WorkspaceEntry[]>;
   /** Resolve the enterprise that owns a workspace, preferring a hint then the cache. */
   getEnterpriseForWorkspace(workspaceId: string, hint?: string): Promise<string>;
+  /**
+   * The repo to act on: an explicit argument, else the client's workspace
+   * roots, else the server's working directory. Throws with the directories
+   * it checked when none has a git remote.
+   */
+  resolveRepoUrl(explicit?: string): Promise<ResolvedRepo>;
 }
 
 /**
  * A single MCP tool: its registered name and the handler logic. The input
- * schema and description are looked up from `validation.ts` by name, so a tool
- * file only carries its behavior.
+ * schema, description, and annotations are looked up from `validation.ts` by
+ * name, so a tool file only carries its behavior.
  */
 export interface ToolDef {
   name: ToolName;
@@ -111,20 +119,32 @@ export function createToolContext(context: ServerContext): ToolContext {
     );
   }
 
-  return { client, listAllWorkspaces, getEnterpriseForWorkspace };
+  const resolveRepoUrl = createRepoResolver({
+    listRoots: context.listRoots ?? (async () => []),
+    cwd: () => process.cwd(),
+    gitRemote: gitRemoteUrl,
+  });
+
+  return { client, listAllWorkspaces, getEnterpriseForWorkspace, resolveRepoUrl };
 }
 
 /**
  * Register one tool on the server. McpServer.registerTool handles the
  * tools/list and tools/call wiring, generates the JSON Schema from the Zod
- * shape, and validates arguments before the handler runs. We supply the shape
- * and description (from validation.ts) and wrap the handler with the shared
- * try/catch + JSON formatting.
+ * shape, and validates arguments before the handler runs. We supply the shape,
+ * description, and annotations (from validation.ts) and wrap the handler with
+ * the shared try/catch + JSON formatting.
  */
 export function registerTool(server: McpServer, tool: ToolDef, ctx: ToolContext): void {
+  const annotations = TOOL_ANNOTATIONS[tool.name];
   server.registerTool(
     tool.name,
-    { description: TOOL_DESCRIPTIONS[tool.name], inputSchema: TOOL_SHAPES[tool.name] },
+    {
+      title: annotations.title,
+      description: TOOL_DESCRIPTIONS[tool.name],
+      inputSchema: TOOL_SHAPES[tool.name],
+      annotations,
+    },
     async (args: Args) => {
       try {
         return asText(await tool.run(ctx, args));

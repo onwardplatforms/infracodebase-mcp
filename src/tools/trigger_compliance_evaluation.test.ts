@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { triggerComplianceEvaluation } from "./trigger_compliance_evaluation.js";
+import { triggerComplianceEvaluation, TRIGGER_NEXT } from "./trigger_compliance_evaluation.js";
 import { mockClient, mockContext } from "../test-helpers.js";
 
 describe("trigger_compliance_evaluation", () => {
@@ -85,7 +85,7 @@ describe("trigger_compliance_evaluation", () => {
     expect(getEnterpriseForWorkspace).toHaveBeenCalledWith("ws_1", "ent_9");
   });
 
-  it("returns the client's response verbatim, including the results-page url", async () => {
+  it("returns the client's response plus a `next` instruction", async () => {
     const client = mockClient({
       triggerComplianceEvaluation: vi.fn().mockResolvedValue({
         id: "eval_1",
@@ -101,6 +101,31 @@ describe("trigger_compliance_evaluation", () => {
       id: "eval_1",
       status: "running",
       url: "https://app.infracodebase.com/acme/my-workspace/compliance/eval_1",
+      // Guidance rides in the payload, where no client truncates it.
+      next: TRIGGER_NEXT,
     });
+  });
+
+  it("explains a deduped run in `next` instead of letting it read as an error", async () => {
+    const client = mockClient({
+      triggerComplianceEvaluation: vi.fn().mockResolvedValue({
+        id: "eval_full",
+        status: "running",
+        deduped: true,
+        requested_scope: "rules:2",
+        effective_scope: "full",
+        url: "https://app.infracodebase.com/acme/my-workspace/compliance/eval_full",
+      }),
+    });
+    const ctx = mockContext({ client, getEnterpriseForWorkspace: vi.fn().mockResolvedValue("ent_1") });
+
+    const result = (await triggerComplianceEvaluation.run(ctx, {
+      workspace_id: "ws_1",
+      rule_ids: ["rule_1", "rule_2"],
+    })) as { next: string };
+
+    expect(result.next).toContain("folded into it");
+    expect(result.next).toContain("That is not an error");
+    expect(result.next.endsWith(TRIGGER_NEXT)).toBe(true);
   });
 });

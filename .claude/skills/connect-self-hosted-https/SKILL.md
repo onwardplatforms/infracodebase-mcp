@@ -29,7 +29,7 @@ Via npx (published package):
 claude mcp add infracodebase \
   --env INFRACODEBASE_TOKEN=icb_pat_xxx \
   --env INFRACODEBASE_API_URL=https://infra.acme.com/api/v1 \
-  -- npx -y @infracodebase/mcp@latest
+  -- npx -y @infracodebase/mcp@2
 ```
 
 From a local clone (after `npm install && npm run build`):
@@ -48,7 +48,7 @@ Equivalent `mcp.json` (Claude Desktop / Cursor / etc.):
   "mcpServers": {
     "infracodebase": {
       "command": "npx",
-      "args": ["-y", "@infracodebase/mcp@latest"],
+      "args": ["-y", "@infracodebase/mcp@2"],
       "env": {
         "INFRACODEBASE_TOKEN": "icb_pat_xxx",
         "INFRACODEBASE_API_URL": "https://infra.acme.com/api/v1"

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { getComplianceEvaluation } from "./get_compliance_evaluation.js";
+import { getComplianceEvaluation, RUNNING_NEXT } from "./get_compliance_evaluation.js";
 import { mockClient, mockContext } from "../test-helpers.js";
 
 describe("get_compliance_evaluation", () => {
@@ -62,5 +62,30 @@ describe("get_compliance_evaluation", () => {
       score: 90,
       url: "https://app.infracodebase.com/acme/my-workspace/compliance/eval_1",
     });
+  });
+});
+
+describe("get_compliance_evaluation — in-flight runs", () => {
+  it("attaches a `next` instruction while the evaluation is still running", async () => {
+    const client = mockClient({
+      getComplianceEvaluation: vi.fn().mockResolvedValue({ id: "eval_1", status: "running", url: "https://x" }),
+    });
+    const ctx = mockContext({ client, getEnterpriseForWorkspace: vi.fn().mockResolvedValue("ent_1") });
+
+    const result = await getComplianceEvaluation.run(ctx, { workspace_id: "ws_1" });
+
+    expect(result).toEqual({ id: "eval_1", status: "running", url: "https://x", next: RUNNING_NEXT });
+  });
+
+  it("leaves a completed evaluation untouched", async () => {
+    const client = mockClient({
+      getComplianceEvaluation: vi.fn().mockResolvedValue({ id: "eval_1", status: "completed", score: 88 }),
+    });
+    const ctx = mockContext({ client, getEnterpriseForWorkspace: vi.fn().mockResolvedValue("ent_1") });
+
+    const result = await getComplianceEvaluation.run(ctx, { workspace_id: "ws_1" });
+
+    expect(result).toEqual({ id: "eval_1", status: "completed", score: 88 });
+    expect(result).not.toHaveProperty("next");
   });
 });
