@@ -1,3 +1,4 @@
+import net from "node:net";
 import { mkdtemp, readFile, rm, stat, writeFile, mkdir, utimes } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -285,6 +286,49 @@ describe("stored OAuth sessions", () => {
     );
     expect(String(tokenRequest?.[1]?.body)).toContain("code_verifier=");
     expect(fetchMock.mock.calls.every(([, init]) => init?.signal instanceof AbortSignal)).toBe(true);
+  });
+
+  it("returns as soon as login completes even while the browser keeps a connection open", async () => {
+    const credentialPath = await temporaryCredentialPath();
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/api/mcp/oauth/register")) {
+        return Response.json({ client_id: "client-1" }, { status: 201 });
+      }
+      if (url.endsWith("/api/mcp/oauth/token")) {
+        return Response.json({ access_token: "a", refresh_token: "r", expires_in: 600 });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const lingering: net.Socket[] = [];
+
+    const loggedIn = login("https://example.com/api/v1", {
+      credentialPath,
+      fetch: fetchMock as typeof fetch,
+      openBrowser: async (url) => {
+        const authorizationUrl = new URL(url);
+        const callback = new URL(authorizationUrl.searchParams.get("redirect_uri")!);
+        // Browsers keep spare connections open to a page they just loaded.
+        const idle = net.connect(Number(callback.port), callback.hostname);
+        lingering.push(idle);
+        await new Promise((resolve) => idle.once("connect", resolve));
+        callback.searchParams.set("code", "authorization-code");
+        callback.searchParams.set("state", authorizationUrl.searchParams.get("state")!);
+        expect((await fetch(callback)).status).toBe(200);
+      },
+    });
+
+    try {
+      await expect(
+        Promise.race([
+          loggedIn.then(() => "returned"),
+          new Promise((resolve) => setTimeout(() => resolve("still waiting"), 3_000)),
+        ])
+      ).resolves.toBe("returned");
+    } finally {
+      lingering.forEach((socket) => socket.destroy());
+      await loggedIn.catch(() => undefined);
+    }
   });
 
   it("does not reflect OAuth callback errors into the browser page", async () => {

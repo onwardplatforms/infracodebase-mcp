@@ -618,6 +618,9 @@ export async function login(apiUrl: string, options: LoginOptions = {}): Promise
       await writeCredentialFile(filePath, credentials);
     });
   } finally {
+    // close() waits for every open connection, and browsers keep spare ones
+    // open to a page they just loaded, which can hold login open for a minute.
+    server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 }
