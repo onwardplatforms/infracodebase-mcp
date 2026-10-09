@@ -9,7 +9,9 @@ export const rejectComplianceException: ToolDef = {
     return {
       rule_id: a.rule_id,
       state: "rejected",
-      next: "The request is closed and the rule stays enforced. The requester sees your reason.",
+      next:
+        "The request is closed. Any exception already in force on the rule is unchanged. The " +
+        "requester sees your reason.",
     };
   },
 };

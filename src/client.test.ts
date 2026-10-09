@@ -168,7 +168,7 @@ describe("InfracodebaseClient — query/path building", () => {
     expect(lastCall(fetchMock).url).toBe("https://api.example.com/workspace-context");
   });
 
-  it("returns undefined on a 204 instead of parsing an empty body", async () => {
+  it("returns undefined for a no-content decision instead of parsing an empty body", async () => {
     const fetchMock = stubFetch(new Response(null, { status: 204 }));
     const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
 
