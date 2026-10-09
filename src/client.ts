@@ -64,6 +64,8 @@ export class InfracodebaseClient {
       throw new ApiError(response.status, errorText, path, this.baseUrl, this.authKind);
     }
 
+    // Decisions like approve or revoke answer 204 with no body.
+    if (response.status === 204) return undefined as T;
     return (await response.json()) as T;
   }
 
@@ -225,6 +227,68 @@ export class InfracodebaseClient {
       query;
 
     return this.request<unknown>("GET", path);
+  }
+
+  /** Active exceptions and open requests for a workspace. */
+  async listComplianceExceptions(enterpriseId: string, workspaceId: string) {
+    return this.request<{ data: unknown[] }>(
+      "GET",
+      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/exceptions`
+    );
+  }
+
+  /**
+   * Request an exception (the default), or grant one with mode "grant". The
+   * server refuses a grant from anyone without compliance approve permission
+   * rather than downgrading it to a request.
+   */
+  async submitComplianceException(
+    enterpriseId: string,
+    workspaceId: string,
+    body: {
+      rule_id: string;
+      type: "risk_acceptance" | "not_applicable";
+      justification: string;
+      expires_in_days?: number;
+      evaluation_id?: string;
+      mode?: "request" | "grant";
+    }
+  ) {
+    return this.request<{
+      rule_id: string;
+      rule_title: string;
+      state: "active" | "pending";
+      request_number: number | null;
+    }>("POST", `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/exceptions`, {
+      body,
+    });
+  }
+
+  async approveComplianceException(enterpriseId: string, workspaceId: string, ruleId: string) {
+    await this.request<void>(
+      "POST",
+      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/exceptions/${encodeURIComponent(ruleId)}/approve`
+    );
+  }
+
+  async rejectComplianceException(
+    enterpriseId: string,
+    workspaceId: string,
+    ruleId: string,
+    reason: string
+  ) {
+    await this.request<void>(
+      "POST",
+      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/exceptions/${encodeURIComponent(ruleId)}/reject`,
+      { body: { reason } }
+    );
+  }
+
+  async revokeComplianceException(enterpriseId: string, workspaceId: string, ruleId: string) {
+    await this.request<void>(
+      "DELETE",
+      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/exceptions/${encodeURIComponent(ruleId)}`
+    );
   }
 
   async getComplianceEvalSpec(enterpriseId: string, workspaceId: string) {

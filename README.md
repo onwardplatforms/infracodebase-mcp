@@ -81,6 +81,18 @@ The server gives your agent 18 tools, grouped into six areas. Your saved session
 | `list_compliance_findings` | See the pass or fail result for each rule in a run. | `workspace_id`, `ref?`, `status?` |
 | `get_compliance_eval_spec` | See the exact instructions the compliance checker follows. | `workspace_id` |
 
+### Compliance exceptions
+
+For failing rules the code can't or shouldn't fix. An exception is either a **risk acceptance** (a real violation someone accepts) or **not applicable** (the rule doesn't apply at this level, like a control set per subscription or tenant). Everyone requests by default, and a compliance approver reviews. Approvers can grant directly, but only when they explicitly ask to. Exception decisions are recorded under your name, so they need your own sign-in or personal access token. Enterprise access tokens can't make them.
+
+| Tool | What it does | Key inputs |
+| --- | --- | --- |
+| `list_compliance_exceptions` | See active exceptions and requests waiting on an approver. | `workspace_id` |
+| `submit_compliance_exceptions` | Request exceptions for a batch of rules, or grant them if you're an approver and say so. | `workspace_id`, `exceptions[]` (`rule_id`, `type`, `justification`, `expires_in_days?`), `grant?` |
+| `approve_compliance_exception` | Approve a waiting request. Approvers only. Takes effect immediately. | `workspace_id`, `rule_id` |
+| `reject_compliance_exception` | Reject a waiting request with a reason. Approvers only. | `workspace_id`, `rule_id`, `reason` |
+| `revoke_compliance_exception` | End an exception so the rule is enforced again. Approvers only. | `workspace_id`, `rule_id` |
+
 ### Enterprise resources
 
 | Tool | What it does | Key inputs |
