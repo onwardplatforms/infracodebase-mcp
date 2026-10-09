@@ -20,6 +20,8 @@ interface StoredCredential {
   refreshToken: string;
   refreshRecoveryKey?: string;
   expiresAt: number;
+  /** Scopes the user approved. Missing on logins saved by older versions. */
+  scopes?: string[];
 }
 
 interface CredentialFile {
@@ -31,6 +33,8 @@ interface TokenResponse {
   access_token: string;
   refresh_token: string;
   expires_in: number;
+  /** Space-separated scopes the user approved, which may be fewer than requested. */
+  scope?: string;
 }
 
 interface OAuthErrorBody {
@@ -328,6 +332,15 @@ export function createStoredOAuthTokenProvider(
   };
 }
 
+/** The scopes approved for the saved login to this instance, when known. */
+export async function savedLoginScopes(
+  apiUrl: string,
+  options: Pick<OAuthOptions, "credentialPath"> = {}
+): Promise<string[] | undefined> {
+  const credentials = await readCredentialFile(options.credentialPath ?? defaultCredentialPath());
+  return credentials.instances[instanceOrigin(apiUrl)]?.scopes;
+}
+
 export async function logout(apiUrl: string, options: OAuthOptions = {}): Promise<boolean> {
   const filePath = options.credentialPath ?? defaultCredentialPath();
   const fetchImpl = options.fetch ?? fetch;
@@ -479,6 +492,44 @@ function sendCallbackPage(
   response.end(callbackPage(kind), onSent);
 }
 
+/**
+ * The CLI's built-in client ID, when this deployment has one. Older
+ * deployments answer 404, and the CLI registers itself there instead.
+ */
+async function builtInClientId(origin: string, fetchImpl: typeof fetch): Promise<string | null> {
+  try {
+    const response = await fetchImpl(`${origin}/api/mcp/oauth/cli`, {
+      signal: AbortSignal.timeout(OAUTH_FETCH_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+    const body = (await response.json()) as { client_id?: unknown };
+    return typeof body.client_id === "string" && body.client_id ? body.client_id : null;
+  } catch {
+    return null;
+  }
+}
+
+async function registerClient(
+  origin: string,
+  redirectUri: string,
+  fetchImpl: typeof fetch
+): Promise<string> {
+  const response = await fetchImpl(`${origin}/api/mcp/oauth/register`, {
+    method: "POST",
+    signal: AbortSignal.timeout(OAUTH_FETCH_TIMEOUT_MS),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      client_name: "InfraCodebase CLI",
+      client_uri: "https://github.com/onwardplatforms/infracodebase-mcp",
+      redirect_uris: [redirectUri],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    }),
+  });
+  return (await responseJson<RegistrationResponse>(response, "Registering the CLI")).client_id;
+}
+
 export async function login(apiUrl: string, options: LoginOptions = {}): Promise<void> {
   const origin = instanceOrigin(apiUrl);
   const resource = resourceUrl(apiUrl);
@@ -546,26 +597,12 @@ export async function login(apiUrl: string, options: LoginOptions = {}): Promise
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Could not start OAuth callback.");
     const redirectUri = `http://127.0.0.1:${address.port}/oauth/callback`;
-    const registrationResponse = await fetchImpl(`${origin}/api/mcp/oauth/register`, {
-      method: "POST",
-      signal: AbortSignal.timeout(OAUTH_FETCH_TIMEOUT_MS),
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        client_name: "InfraCodebase CLI",
-        client_uri: "https://github.com/onwardplatforms/infracodebase-mcp",
-        redirect_uris: [redirectUri],
-        grant_types: ["authorization_code", "refresh_token"],
-        response_types: ["code"],
-        token_endpoint_auth_method: "none",
-      }),
-    });
-    const registration = await responseJson<RegistrationResponse>(
-      registrationResponse,
-      "Registering the CLI"
-    );
+    const clientId =
+      (await builtInClientId(origin, fetchImpl)) ??
+      (await registerClient(origin, redirectUri, fetchImpl));
     const authorizationUrl = new URL("/mcp/authorize", origin);
     authorizationUrl.search = new URLSearchParams({
-      client_id: registration.client_id,
+      client_id: clientId,
       redirect_uri: redirectUri,
       response_type: "code",
       resource,
@@ -600,7 +637,7 @@ export async function login(apiUrl: string, options: LoginOptions = {}): Promise
         grant_type: "authorization_code",
         code: result.code,
         redirect_uri: redirectUri,
-        client_id: registration.client_id,
+        client_id: clientId,
         resource,
         code_verifier: verifier,
       }),
@@ -609,12 +646,13 @@ export async function login(apiUrl: string, options: LoginOptions = {}): Promise
     await withCredentialLock(filePath, async () => {
       const credentials = await readCredentialFile(filePath);
       credentials.instances[origin] = {
-        clientId: registration.client_id,
+        clientId,
         resource,
         accessToken: tokens.access_token,
         refreshToken: tokens.refresh_token,
         refreshRecoveryKey: randomUrlSafe(),
         expiresAt: now() + tokens.expires_in * 1000,
+        scopes: tokens.scope?.split(/\s+/).filter(Boolean),
       };
       await writeCredentialFile(filePath, credentials);
     });

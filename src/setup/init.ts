@@ -8,7 +8,12 @@ import os from "node:os";
 import * as prompts from "@clack/prompts";
 import { ApiError, InfracodebaseClient, type Identity } from "../client.js";
 import { DEFAULT_API_URL } from "../config.js";
-import { AuthSessionError, createStoredOAuthTokenProvider, login } from "../oauth.js";
+import {
+  AuthSessionError,
+  createStoredOAuthTokenProvider,
+  login,
+  savedLoginScopes,
+} from "../oauth.js";
 import {
   clientsFor,
   normalizeApiUrl,
@@ -88,10 +93,20 @@ function describeIdentity(identity: Identity): string {
   return identity.email ? `Signed in as ${identity.email}` : "Signed in";
 }
 
+async function noteIfReadOnly(apiUrl: string): Promise<void> {
+  const scopes = await savedLoginScopes(apiUrl).catch(() => undefined);
+  if (scopes && !scopes.includes("execute")) {
+    prompts.log.info(
+      "This login is read-only, so your agent can view but not change anything. To allow changes, run logout, then init again."
+    );
+  }
+}
+
 async function signIn(options: InitOptions): Promise<Identity> {
   const saved = await existingIdentity(options.apiUrl);
   if (saved) {
     prompts.log.success(`${describeIdentity(saved)} (saved login)`);
+    await noteIfReadOnly(options.apiUrl);
     return saved;
   }
 
@@ -112,6 +127,7 @@ async function signIn(options: InitOptions): Promise<Identity> {
   });
   const identity = await identityClient(options.apiUrl).verifyToken();
   waiting.stop(describeIdentity(identity));
+  await noteIfReadOnly(options.apiUrl);
   return identity;
 }
 

@@ -3,7 +3,13 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AuthSessionError, createStoredOAuthTokenProvider, login, logout } from "./oauth.js";
+import {
+  AuthSessionError,
+  createStoredOAuthTokenProvider,
+  login,
+  logout,
+  savedLoginScopes,
+} from "./oauth.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -328,6 +334,80 @@ describe("stored OAuth sessions", () => {
       spareSocket?.destroy();
     }
   }, 5_000);
+
+  it("signs in as the built-in CLI client when the deployment has one, without registering", async () => {
+    const credentialPath = await temporaryCredentialPath();
+    let authorizeClientId: string | null = null;
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/api/mcp/oauth/cli")) return Response.json({ client_id: "infracodebase-cli" });
+      if (url.endsWith("/api/mcp/oauth/token")) {
+        return Response.json({
+          access_token: "access-1",
+          refresh_token: "refresh-1",
+          expires_in: 600,
+          scope: "read",
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    await login("https://example.com/api/v1", {
+      credentialPath,
+      fetch: fetchMock as typeof fetch,
+      openBrowser: async (url) => {
+        const authorizationUrl = new URL(url);
+        authorizeClientId = authorizationUrl.searchParams.get("client_id");
+        const callback = new URL(authorizationUrl.searchParams.get("redirect_uri")!);
+        expect(callback.pathname).toBe("/oauth/callback");
+        callback.searchParams.set("code", "authorization-code");
+        callback.searchParams.set("state", authorizationUrl.searchParams.get("state")!);
+        await fetch(callback);
+      },
+    });
+
+    expect(authorizeClientId).toBe("infracodebase-cli");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/register"))).toBe(false);
+    const saved = JSON.parse(await readFile(credentialPath, "utf8"));
+    expect(saved.instances["https://example.com"]).toMatchObject({
+      clientId: "infracodebase-cli",
+      scopes: ["read"],
+    });
+    await expect(savedLoginScopes("https://example.com/api/v1", { credentialPath })).resolves.toEqual([
+      "read",
+    ]);
+  });
+
+  it("registers itself on deployments that predate the built-in client", async () => {
+    const credentialPath = await temporaryCredentialPath();
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/api/mcp/oauth/cli")) return new Response("Not found", { status: 404 });
+      if (url.endsWith("/api/mcp/oauth/register")) {
+        return Response.json({ client_id: "client-dynamic" }, { status: 201 });
+      }
+      if (url.endsWith("/api/mcp/oauth/token")) {
+        return Response.json({ access_token: "a", refresh_token: "r", expires_in: 600 });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    await login("https://example.com/api/v1", {
+      credentialPath,
+      fetch: fetchMock as typeof fetch,
+      openBrowser: async (url) => {
+        const authorizationUrl = new URL(url);
+        expect(authorizationUrl.searchParams.get("client_id")).toBe("client-dynamic");
+        const callback = new URL(authorizationUrl.searchParams.get("redirect_uri")!);
+        callback.searchParams.set("code", "authorization-code");
+        callback.searchParams.set("state", authorizationUrl.searchParams.get("state")!);
+        await fetch(callback);
+      },
+    });
+
+    const saved = JSON.parse(await readFile(credentialPath, "utf8"));
+    expect(saved.instances["https://example.com"].clientId).toBe("client-dynamic");
+  });
 
   it("does not reflect OAuth callback errors into the browser page", async () => {
     const credentialPath = await temporaryCredentialPath();
