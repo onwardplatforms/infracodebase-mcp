@@ -17,6 +17,7 @@ import {
   type ServerLaunch,
   type SetupEnv,
 } from "./clients.js";
+import { useBrandColors } from "./theme.js";
 
 const NEXT_STEP =
   'Open any repo with infrastructure code and ask your agent: "Check this repo against our rulesets."';
@@ -260,6 +261,15 @@ async function chooseClients(
 }
 
 export async function runInit(options: InitOptions): Promise<void> {
+  const restoreColors = useBrandColors(process.stdout);
+  try {
+    await setUp(options);
+  } finally {
+    restoreColors();
+  }
+}
+
+async function setUp(options: InitOptions): Promise<void> {
   if (!options.clientIds && !(process.stdin.isTTY && process.stdout.isTTY)) {
     throw new Error(
       `init needs a terminal to ask which MCP clients to set up. Pass --client with one or more of: ${clientIdList(process.platform)}.`
