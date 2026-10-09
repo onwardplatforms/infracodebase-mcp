@@ -10,8 +10,8 @@ export const revokeComplianceException: ToolDef = {
       rule_id: a.rule_id,
       state: "revoked",
       next:
-        "The rule is enforced again on this workspace. If the code still violates it, open pull " +
-        "requests will fail the compliance check.",
+        "The rule is enforced again on this workspace and counts against the score, which can " +
+        "fail the compliance check on open pull requests that still violate it.",
     };
   },
 };

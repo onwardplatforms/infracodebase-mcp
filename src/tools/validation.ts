@@ -208,7 +208,7 @@ export const TOOL_SHAPES = {
             .number()
             .int()
             .min(1)
-            .max(365)
+            .max(365) // the server's MAX_OVERRIDE_EXPIRY_DAYS
             .describe("Days until it expires. Omit for an exception that never expires (the default).")
             .optional(),
         })
@@ -393,17 +393,17 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   trigger_compliance_evaluation:
     "Start a compliance evaluation of the code already pushed to the linked branch. The platform never sees your local tree: commit and push first, or the run scores stale code while the result looks valid. Pass ref as the branch name you pushed (e.g. 'main'); never omit it (that evaluates a possibly stale checkout) and never pass a bare SHA (it records no branch). Often no manual full run is needed: with CI compliance enabled, a push to the default branch or to a branch with an open pull request auto-runs a full evaluation. After pushing, call get_compliance_evaluation once; if a run for your commit already exists, trigger only a scoped re-check (rule_ids, rule_id, or ruleset_id) for the rules you fixed. Trigger a full run yourself only when no auto-run applies, at most once per task. If the server folds your scoped request into an already-running full run, the response has deduped: true with requested_scope and effective_scope; that is not an error. The call returns immediately with the queued run, a results `url`, and a `next` field telling you what to do: share the url with the user and stop. Never poll, sleep, or estimate how long it will take.",
   list_compliance_findings:
-    "Return the per-rule findings from a compliance evaluation. With no ref, uses the workspace's latest completed evaluation. Each finding's `exception` shows whether an exception already covers it (active, stale, or pending).",
+    "Return the per-rule findings from a compliance evaluation. With no ref, uses the workspace's latest completed evaluation. Each finding's `exception` gives the workspace's current exception on the rule, if any. Only `active` is in force: `stale` no longer applies, and `pending` is a request awaiting review.",
   list_compliance_exceptions:
     "List a workspace's compliance exceptions: active ones, stale ones (granted against rule text that has since changed, so no longer in force), and open requests waiting on an approver. Use it to see what's already covered before submitting, or, for an approver, to review what's waiting.",
   submit_compliance_exceptions:
     "Submit exceptions for failing rules the code can't or shouldn't fix. Only use this after remediation is exhausted and the user has agreed to the list you showed them. By default every user, approvers included, creates requests that a compliance approver reviews; nothing changes until one is approved. Set grant: true only when the user has explicitly said to grant rather than request. A grant takes effect immediately for the whole workspace with no review, and before sending it you must tell the user which rules will stop being enforced and for how long and get an explicit yes. Required rules can't carry an exception. Needs the user's own sign-in or personal access token; enterprise access tokens are refused.",
   approve_compliance_exception:
-    "Approve an open exception request (compliance approvers only). Approval is final: the rule stops being enforced on the whole workspace immediately, until revoked or expired. Before calling, tell the user which rule, the exception type, the justification, and the expiry, say that it takes effect immediately, and get an explicit yes. Never approve on your own initiative.",
+    "Approve an open exception request (compliance approvers only). Approval is final: the rule stops counting against the score on the whole workspace immediately, until revoked or expired. Call list_compliance_exceptions first, then tell the user which rule, the exception type, the justification, the expiry, and who requested it, say that it takes effect immediately, and get an explicit yes. Never approve on your own initiative.",
   reject_compliance_exception:
     "Reject an open exception request (compliance approvers only), with a reason the requester will see. Confirm with the user before calling.",
   revoke_compliance_exception:
-    "End an exception that's in force (compliance approvers only). The rule is enforced again immediately, so open pull requests that still violate it will fail the compliance check. Confirm with the user before calling.",
+    "End an exception that's in force (compliance approvers only). The rule counts against the score again immediately, which can fail the compliance check on open pull requests that still violate it. Confirm with the user before calling.",
   get_compliance_eval_spec:
     "Return the system prompt and conventions our CI compliance evaluator uses.",
   list_enterprise_resources:

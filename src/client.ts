@@ -43,6 +43,8 @@ export class InfracodebaseClient {
     path: string,
     options?: {
       body?: unknown;
+      /** The endpoint answers 204 with no body (approve, reject, revoke). */
+      noContent?: boolean;
     }
   ): Promise<T> {
     const url = `${this.baseUrl}${path}`;
@@ -64,8 +66,7 @@ export class InfracodebaseClient {
       throw new ApiError(response.status, errorText, path, this.baseUrl, this.authKind);
     }
 
-    // Decisions like approve or revoke answer 204 with no body.
-    if (response.status === 204) return undefined as T;
+    if (options?.noContent) return undefined as T;
     return (await response.json()) as T;
   }
 
@@ -267,7 +268,8 @@ export class InfracodebaseClient {
   async approveComplianceException(enterpriseId: string, workspaceId: string, ruleId: string) {
     await this.request<void>(
       "POST",
-      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/exceptions/${encodeURIComponent(ruleId)}/approve`
+      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/exceptions/${encodeURIComponent(ruleId)}/approve`,
+      { noContent: true }
     );
   }
 
@@ -280,14 +282,15 @@ export class InfracodebaseClient {
     await this.request<void>(
       "POST",
       `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/exceptions/${encodeURIComponent(ruleId)}/reject`,
-      { body: { reason } }
+      { body: { reason }, noContent: true }
     );
   }
 
   async revokeComplianceException(enterpriseId: string, workspaceId: string, ruleId: string) {
     await this.request<void>(
       "DELETE",
-      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/exceptions/${encodeURIComponent(ruleId)}`
+      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/exceptions/${encodeURIComponent(ruleId)}`,
+      { noContent: true }
     );
   }
 
