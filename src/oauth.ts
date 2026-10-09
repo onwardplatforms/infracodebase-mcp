@@ -474,6 +474,7 @@ function sendCallbackPage(
     "Cache-Control": "no-store",
     "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
     "X-Content-Type-Options": "nosniff",
+    Connection: "close",
   });
   response.end(callbackPage(kind), onSent);
 }
@@ -618,6 +619,10 @@ export async function login(apiUrl: string, options: LoginOptions = {}): Promise
       await writeCredentialFile(filePath, credentials);
     });
   } finally {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    // close() waits for every open socket, and browsers keep spare connections
+    // to the callback port open, so drop them or login never returns.
+    const closed = new Promise<void>((resolve) => server.close(() => resolve()));
+    server.closeAllConnections();
+    await closed;
   }
 }

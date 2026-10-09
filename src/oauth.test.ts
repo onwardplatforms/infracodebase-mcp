@@ -1,4 +1,5 @@
 import { mkdtemp, readFile, rm, stat, writeFile, mkdir, utimes } from "node:fs/promises";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -286,6 +287,47 @@ describe("stored OAuth sessions", () => {
     expect(String(tokenRequest?.[1]?.body)).toContain("code_verifier=");
     expect(fetchMock.mock.calls.every(([, init]) => init?.signal instanceof AbortSignal)).toBe(true);
   });
+
+  it("finishes login while the browser still holds a connection to the callback port", async () => {
+    const credentialPath = await temporaryCredentialPath();
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/api/mcp/oauth/register")) {
+        return Response.json({ client_id: "client-1" }, { status: 201 });
+      }
+      if (url.endsWith("/api/mcp/oauth/token")) {
+        return Response.json({
+          access_token: "access-1",
+          refresh_token: "refresh-1",
+          expires_in: 600,
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    let spareSocket: net.Socket | undefined;
+
+    try {
+      await expect(
+        login("https://example.com/api/v1", {
+          credentialPath,
+          fetch: fetchMock as typeof fetch,
+          timeoutMs: 1_000,
+          openBrowser: async (url) => {
+            const authorizationUrl = new URL(url);
+            const callback = new URL(authorizationUrl.searchParams.get("redirect_uri")!);
+            // Chrome opens a spare connection it never sends a request on.
+            spareSocket = net.connect(Number(callback.port), "127.0.0.1");
+            await new Promise((resolve) => spareSocket!.once("connect", resolve));
+            callback.searchParams.set("code", "authorization-code");
+            callback.searchParams.set("state", authorizationUrl.searchParams.get("state")!);
+            expect((await fetch(callback)).status).toBe(200);
+          },
+        })
+      ).resolves.toBeUndefined();
+    } finally {
+      spareSocket?.destroy();
+    }
+  }, 5_000);
 
   it("does not reflect OAuth callback errors into the browser page", async () => {
     const credentialPath = await temporaryCredentialPath();
