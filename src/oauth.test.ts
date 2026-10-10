@@ -1,8 +1,14 @@
 import { mkdtemp, readFile, rm, stat, writeFile, mkdir, utimes } from "node:fs/promises";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AuthSessionError, createStoredOAuthTokenProvider, login, logout } from "./oauth.js";
+import {
+  AuthSessionError,
+  createStoredOAuthTokenProvider,
+  login,
+  logout,
+} from "./oauth.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -110,6 +116,74 @@ describe("stored OAuth sessions", () => {
 
     await expect(getAccessToken()).resolves.toBe("new-access");
     await expect(stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("refreshes a token the API rejected even though its saved expiry has not passed", async () => {
+    const credentialPath = await temporaryCredentialPath();
+    await mkdir(path.dirname(credentialPath), { recursive: true });
+    await writeFile(
+      credentialPath,
+      JSON.stringify({
+        version: 1,
+        instances: {
+          "https://example.com": {
+            clientId: "client-1",
+            resource: "https://example.com/api/v1",
+            accessToken: "rejected-access",
+            refreshToken: "old-refresh",
+            expiresAt: 3_600_000,
+          },
+        },
+      })
+    );
+    const fetchMock = vi.fn(async () =>
+      Response.json({ access_token: "new-access", refresh_token: "new-refresh", expires_in: 3600 })
+    );
+    const getAccessToken = createStoredOAuthTokenProvider("https://example.com/api/v1", {
+      credentialPath,
+      fetch: fetchMock as typeof fetch,
+      now: () => 10_000,
+    });
+
+    await expect(getAccessToken()).resolves.toBe("rejected-access");
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await expect(getAccessToken({ rejected: "rejected-access" })).resolves.toBe("new-access");
+    expect(String(fetchMock.mock.calls[0][1]?.body)).toContain("refresh_token=old-refresh");
+    const saved = JSON.parse(await readFile(credentialPath, "utf8"));
+    expect(saved.instances["https://example.com"]).toMatchObject({
+      accessToken: "new-access",
+      refreshToken: "new-refresh",
+    });
+  });
+
+  it("does not refresh again when another process already replaced the rejected token", async () => {
+    const credentialPath = await temporaryCredentialPath();
+    await mkdir(path.dirname(credentialPath), { recursive: true });
+    await writeFile(
+      credentialPath,
+      JSON.stringify({
+        version: 1,
+        instances: {
+          "https://example.com": {
+            clientId: "client-1",
+            resource: "https://example.com/api/v1",
+            accessToken: "newer-access",
+            refreshToken: "newer-refresh",
+            expiresAt: 3_600_000,
+          },
+        },
+      })
+    );
+    const fetchMock = vi.fn();
+    const getAccessToken = createStoredOAuthTokenProvider("https://example.com/api/v1", {
+      credentialPath,
+      fetch: fetchMock as typeof fetch,
+      now: () => 10_000,
+    });
+
+    await expect(getAccessToken({ rejected: "older-access" })).resolves.toBe("newer-access");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("retries a transient refresh failure without telling the user to sign in again", async () => {
@@ -266,7 +340,7 @@ describe("stored OAuth sessions", () => {
         const response = await fetch(callback);
         expect(response.status).toBe(200);
         expect(response.headers.get("content-type")).toContain("text/html");
-        expect(await response.text()).toContain("You can close this window");
+        expect(await response.text()).toContain("Device authorized");
       },
     });
 
@@ -285,6 +359,118 @@ describe("stored OAuth sessions", () => {
     );
     expect(String(tokenRequest?.[1]?.body)).toContain("code_verifier=");
     expect(fetchMock.mock.calls.every(([, init]) => init?.signal instanceof AbortSignal)).toBe(true);
+  });
+
+  it("finishes login while the browser still holds a connection to the callback port", async () => {
+    const credentialPath = await temporaryCredentialPath();
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/api/mcp/oauth/register")) {
+        return Response.json({ client_id: "client-1" }, { status: 201 });
+      }
+      if (url.endsWith("/api/mcp/oauth/token")) {
+        return Response.json({
+          access_token: "access-1",
+          refresh_token: "refresh-1",
+          expires_in: 600,
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    let spareSocket: net.Socket | undefined;
+
+    try {
+      await expect(
+        login("https://example.com/api/v1", {
+          credentialPath,
+          fetch: fetchMock as typeof fetch,
+          timeoutMs: 1_000,
+          openBrowser: async (url) => {
+            const authorizationUrl = new URL(url);
+            const callback = new URL(authorizationUrl.searchParams.get("redirect_uri")!);
+            // Chrome opens a spare connection it never sends a request on.
+            spareSocket = net.connect(Number(callback.port), "127.0.0.1");
+            await new Promise((resolve) => spareSocket!.once("connect", resolve));
+            callback.searchParams.set("code", "authorization-code");
+            callback.searchParams.set("state", authorizationUrl.searchParams.get("state")!);
+            expect((await fetch(callback)).status).toBe(200);
+          },
+        })
+      ).resolves.toBeUndefined();
+    } finally {
+      spareSocket?.destroy();
+    }
+  }, 5_000);
+
+  it("signs in as the built-in CLI client when the deployment has one, without registering", async () => {
+    const credentialPath = await temporaryCredentialPath();
+    let authorizeClientId: string | null = null;
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/api/mcp/oauth/cli")) return Response.json({ client_id: "infracodebase-cli" });
+      if (url.endsWith("/api/mcp/oauth/token")) {
+        return Response.json({
+          access_token: "access-1",
+          refresh_token: "refresh-1",
+          expires_in: 600,
+          scope: "read",
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    await login("https://example.com/api/v1", {
+      credentialPath,
+      fetch: fetchMock as typeof fetch,
+      openBrowser: async (url) => {
+        const authorizationUrl = new URL(url);
+        authorizeClientId = authorizationUrl.searchParams.get("client_id");
+        const callback = new URL(authorizationUrl.searchParams.get("redirect_uri")!);
+        expect(callback.pathname).toBe("/oauth/callback");
+        callback.searchParams.set("code", "authorization-code");
+        callback.searchParams.set("state", authorizationUrl.searchParams.get("state")!);
+        await fetch(callback);
+      },
+    });
+
+    expect(authorizeClientId).toBe("infracodebase-cli");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/register"))).toBe(false);
+    const saved = JSON.parse(await readFile(credentialPath, "utf8"));
+    expect(saved.instances["https://example.com"]).toMatchObject({
+      clientId: "infracodebase-cli",
+      scopes: ["read"],
+    });
+  });
+
+  it("registers itself on deployments that predate the built-in client", async () => {
+    const credentialPath = await temporaryCredentialPath();
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/api/mcp/oauth/cli")) return new Response("Not found", { status: 404 });
+      if (url.endsWith("/api/mcp/oauth/register")) {
+        return Response.json({ client_id: "client-dynamic" }, { status: 201 });
+      }
+      if (url.endsWith("/api/mcp/oauth/token")) {
+        return Response.json({ access_token: "a", refresh_token: "r", expires_in: 600 });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    await login("https://example.com/api/v1", {
+      credentialPath,
+      fetch: fetchMock as typeof fetch,
+      openBrowser: async (url) => {
+        const authorizationUrl = new URL(url);
+        expect(authorizationUrl.searchParams.get("client_id")).toBe("client-dynamic");
+        const callback = new URL(authorizationUrl.searchParams.get("redirect_uri")!);
+        callback.searchParams.set("code", "authorization-code");
+        callback.searchParams.set("state", authorizationUrl.searchParams.get("state")!);
+        await fetch(callback);
+      },
+    });
+
+    const saved = JSON.parse(await readFile(credentialPath, "utf8"));
+    expect(saved.instances["https://example.com"].clientId).toBe("client-dynamic");
   });
 
   it("does not reflect OAuth callback errors into the browser page", async () => {

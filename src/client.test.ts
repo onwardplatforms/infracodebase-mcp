@@ -89,6 +89,41 @@ describe("InfracodebaseClient — request plumbing", () => {
     });
   });
 
+  it("refreshes once and retries when the API rejects a login token", async () => {
+    const fetchMock = stubFetch(jsonResponse({ data: [] }));
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ error: "unauthorized" }, 401))
+      .mockResolvedValueOnce(jsonResponse({ data: ["ent"] }));
+    const getAccessToken = vi
+      .fn<(options?: { rejected?: string }) => Promise<string>>()
+      .mockResolvedValueOnce("stale-access")
+      .mockResolvedValueOnce("fresh-access");
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", getAccessToken });
+
+    await expect(client.listEnterprises()).resolves.toEqual({ data: ["ent"] });
+
+    expect(getAccessToken).toHaveBeenLastCalledWith({ rejected: "stale-access" });
+    expect((fetchMock.mock.calls[1][1] as RequestInit).headers).toMatchObject({
+      Authorization: "Bearer fresh-access",
+    });
+  });
+
+  it("reports a 401 after the single retry, and never retries a personal access token", async () => {
+    const fetchMock = stubFetch(jsonResponse({ error: "unauthorized" }, 401));
+    fetchMock.mockImplementation(async () => jsonResponse({ error: "unauthorized" }, 401));
+    const oauth = new InfracodebaseClient({
+      baseUrl: "https://api.example.com",
+      getAccessToken: async () => "access",
+    });
+    await expect(oauth.listEnterprises()).rejects.toMatchObject({ status: 401 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    fetchMock.mockClear();
+    const pat = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "pat" });
+    await expect(pat.listEnterprises()).rejects.toMatchObject({ status: 401 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("omits the body on a GET", async () => {
     const fetchMock = stubFetch(jsonResponse({ data: [] }));
     const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });

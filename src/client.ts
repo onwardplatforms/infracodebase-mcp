@@ -4,12 +4,13 @@
  * Calls the public /api/v1 endpoints with authentication.
  */
 
+import type { AccessTokenProvider } from "./oauth.js";
 import { VERSION } from "./version.js";
 
 export interface ClientConfig {
   baseUrl: string;
   token?: string;
-  getAccessToken?: () => Promise<string>;
+  getAccessToken?: AccessTokenProvider;
   authKind?: "oauth" | "legacy_token";
 }
 
@@ -23,7 +24,7 @@ export interface Identity {
 
 export class InfracodebaseClient {
   private baseUrl: string;
-  private getAccessToken: () => Promise<string>;
+  private getAccessToken: AccessTokenProvider;
   private authKind: "oauth" | "legacy_token";
 
   constructor(config: ClientConfig) {
@@ -46,18 +47,25 @@ export class InfracodebaseClient {
     }
   ): Promise<T> {
     const url = `${this.baseUrl}${path}`;
-    const token = await this.getAccessToken();
-    const headers: Record<string, string> = {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      "User-Agent": `@infracodebase/mcp/${VERSION}`,
-    };
+    const send = (token: string) =>
+      fetch(url, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "User-Agent": `@infracodebase/mcp/${VERSION}`,
+        },
+        body: options?.body ? JSON.stringify(options.body) : undefined,
+      });
 
-    const response = await fetch(url, {
-      method,
-      headers,
-      body: options?.body ? JSON.stringify(options.body) : undefined,
-    });
+    const token = await this.getAccessToken();
+    let response = await send(token);
+    // A login token can be refused before its saved expiry, for example when
+    // this computer's clock runs behind. Refresh once and retry before telling
+    // the user to sign in again.
+    if (response.status === 401 && this.authKind === "oauth") {
+      response = await send(await this.getAccessToken({ rejected: token }));
+    }
 
     if (!response.ok) {
       const errorText = await response.text();
