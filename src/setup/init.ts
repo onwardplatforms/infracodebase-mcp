@@ -5,6 +5,7 @@
  */
 
 import os from "node:os";
+import { styleText } from "node:util";
 import * as prompts from "@clack/prompts";
 import { ApiError, InfracodebaseClient, type Identity } from "../client.js";
 import { DEFAULT_API_URL } from "../config.js";
@@ -12,7 +13,6 @@ import {
   AuthSessionError,
   createStoredOAuthTokenProvider,
   login,
-  savedLoginScopes,
 } from "../oauth.js";
 import {
   clientsFor,
@@ -22,10 +22,17 @@ import {
   type ServerLaunch,
   type SetupEnv,
 } from "./clients.js";
-import { useBrandColors } from "./theme.js";
+import { hyperlink, supportsHyperlinks, useNeutralColors } from "./theme.js";
 
-const NEXT_STEP =
-  'Open any repo with infrastructure code and ask your agent: "Check this repo against our rulesets."';
+const TRY_IT = [
+  "Try it: open any repo with infrastructure code and ask your agent:",
+  '"Check this repo against our rulesets."',
+];
+
+/** Secondary text: still readable, but steps back from what the user needs to act on. */
+function dim(text: string): string {
+  return styleText("dim", text);
+}
 
 export interface InitOptions {
   apiUrl: string;
@@ -90,34 +97,37 @@ async function existingIdentity(apiUrl: string): Promise<Identity | null> {
 }
 
 function describeIdentity(identity: Identity): string {
-  return identity.email ? `Signed in as ${identity.email}` : "Signed in";
+  const who = identity.email ? `Signed in as ${identity.email}` : "Signed in";
+  const names = identity.enterprises.flatMap((enterprise) => (enterprise.name ? [enterprise.name] : []));
+  if (names.length === 1) return `${who} (${names[0]})`;
+  if (names.length > 1) return `${who} (${names.length} enterprises)`;
+  return who;
 }
 
-async function noteIfReadOnly(apiUrl: string): Promise<void> {
-  const scopes = await savedLoginScopes(apiUrl).catch(() => undefined);
-  if (scopes && !scopes.includes("execute")) {
-    prompts.log.info(
-      "This login is read-only, so your agent can view but not change anything. To allow changes, run logout, then init again."
-    );
-  }
+/**
+ * The sign-in URL is long and wraps across several lines. When the browser
+ * opens on its own it is only a fallback, so show a short clickable form where
+ * the terminal supports links. With --no-open it is the only way in, so show it
+ * whole.
+ */
+function signInMessage(url: string, noOpen: boolean): string {
+  if (noOpen) return `Open this URL to sign in:\n${url}`;
+  const { origin, pathname } = new URL(url);
+  const shown = supportsHyperlinks(process.env) ? hyperlink(`${origin}${pathname}?…`, url) : url;
+  return `Opening your browser to sign in…\n${dim(`(or open this URL: ${shown})`)}`;
 }
 
 async function signIn(options: InitOptions): Promise<Identity> {
   const saved = await existingIdentity(options.apiUrl);
   if (saved) {
-    prompts.log.success(`${describeIdentity(saved)} (saved login)`);
-    await noteIfReadOnly(options.apiUrl);
+    prompts.log.success(`${describeIdentity(saved)} ${dim("· saved login")}`);
     return saved;
   }
 
   const waiting = prompts.spinner();
   await login(options.apiUrl, {
     onAuthorizationUrl: (url) => {
-      prompts.log.step(
-        options.noOpen
-          ? `Open this URL to sign in:\n${url}`
-          : `Opening your browser to sign in. If it doesn't open, use this URL:\n${url}`
-      );
+      prompts.log.step(signInMessage(url, options.noOpen));
       waiting.start("Waiting for you to approve access in the browser");
     },
     openBrowser: options.noOpen ? async () => undefined : undefined,
@@ -126,8 +136,8 @@ async function signIn(options: InitOptions): Promise<Identity> {
     throw error;
   });
   const identity = await identityClient(options.apiUrl).verifyToken();
-  waiting.stop(describeIdentity(identity));
-  await noteIfReadOnly(options.apiUrl);
+  waiting.clear();
+  prompts.log.success(describeIdentity(identity), { spacing: 0 });
   return identity;
 }
 
@@ -212,9 +222,9 @@ function labels(clients: McpClient[]): string {
   return listOf(clients.map((client) => client.label));
 }
 
-function finish(title: string, steps: string[]): void {
-  prompts.note(steps.join("\n"), "Next steps");
-  prompts.outro(title);
+/** End on what to do next, indented to line up under the first line. */
+function finish(lines: string[]): void {
+  prompts.outro(lines.map((line, index) => (index === 0 || line === "" ? line : `   ${line}`)).join("\n"));
 }
 
 /** The clients to configure now, plus how many were already set up. */
@@ -277,7 +287,7 @@ async function chooseClients(
 }
 
 export async function runInit(options: InitOptions): Promise<void> {
-  const restoreColors = useBrandColors(process.stdout);
+  const restoreColors = useNeutralColors(process.stdout);
   try {
     await setUp(options);
   } finally {
@@ -301,21 +311,26 @@ async function setUp(options: InitOptions): Promise<void> {
 
   const { clients, alreadySetUp } = await chooseClients(env, options);
   if (clients.length === 0) {
-    if (alreadySetUp > 0) finish("You're all set.", [NEXT_STEP, `Docs: ${docsUrl}`]);
-    else finish("No clients selected.", ["You're signed in. Run init again to add a client.", `Docs: ${docsUrl}`]);
+    if (alreadySetUp > 0) finish([...TRY_IT, "", dim(`Docs: ${docsUrl}`)]);
+    else finish(["No clients changed. You're signed in, so run init again to add one.", dim(`Docs: ${docsUrl}`)]);
     return;
   }
 
   const launch = serverLaunch(options.apiUrl, env.platform);
-  const restart: string[] = [];
+  // One row per client, names in a column so the results scan down the left.
+  const width = Math.max(...clients.map((client) => client.label.length));
   const manual: string[] = [];
-  for (const client of clients) {
+  for (const [index, client] of clients.entries()) {
     const result = await client.install(env, launch);
+    const row = { spacing: index === 0 ? 1 : 0 };
+    const name = client.label.padEnd(width);
     if (result.ok) {
-      prompts.log.success(`${client.label}: ${result.detail}`);
-      if (result.restart) restart.push(client.label);
+      const detail = result.restart
+        ? `${dim(`${result.detail}.`)} Restart ${client.label} to load it.`
+        : dim(result.detail);
+      prompts.log.success(`${name}  ${detail}`, row);
     } else {
-      prompts.log.error(`${client.label}: ${result.detail}`);
+      prompts.log.error(`${name}  ${result.detail}`, row);
       manual.push(`${client.label}\n${result.manual}`);
     }
   }
@@ -329,14 +344,10 @@ async function setUp(options: InitOptions): Promise<void> {
 
   const configured = clients.length - manual.length;
   if (configured === 0 && alreadySetUp === 0) {
-    prompts.outro(`Nothing was set up. Docs: ${docsUrl}`);
+    finish(["Nothing was set up. Finish the steps above by hand, then restart your client.", dim(`Docs: ${docsUrl}`)]);
     process.exitCode = 1;
     return;
   }
 
-  finish("You're set.", [
-    ...(restart.length > 0 ? [`Restart ${listOf(restart)} to load the new server.`] : []),
-    NEXT_STEP,
-    `Docs: ${docsUrl}`,
-  ]);
+  finish([...TRY_IT, "", dim(`Docs: ${docsUrl}`)]);
 }

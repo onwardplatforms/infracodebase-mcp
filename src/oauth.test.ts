@@ -8,7 +8,6 @@ import {
   createStoredOAuthTokenProvider,
   login,
   logout,
-  savedLoginScopes,
 } from "./oauth.js";
 
 const temporaryDirectories: string[] = [];
@@ -117,6 +116,74 @@ describe("stored OAuth sessions", () => {
 
     await expect(getAccessToken()).resolves.toBe("new-access");
     await expect(stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("refreshes a token the API rejected even though its saved expiry has not passed", async () => {
+    const credentialPath = await temporaryCredentialPath();
+    await mkdir(path.dirname(credentialPath), { recursive: true });
+    await writeFile(
+      credentialPath,
+      JSON.stringify({
+        version: 1,
+        instances: {
+          "https://example.com": {
+            clientId: "client-1",
+            resource: "https://example.com/api/v1",
+            accessToken: "rejected-access",
+            refreshToken: "old-refresh",
+            expiresAt: 3_600_000,
+          },
+        },
+      })
+    );
+    const fetchMock = vi.fn(async () =>
+      Response.json({ access_token: "new-access", refresh_token: "new-refresh", expires_in: 3600 })
+    );
+    const getAccessToken = createStoredOAuthTokenProvider("https://example.com/api/v1", {
+      credentialPath,
+      fetch: fetchMock as typeof fetch,
+      now: () => 10_000,
+    });
+
+    await expect(getAccessToken()).resolves.toBe("rejected-access");
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await expect(getAccessToken({ rejected: "rejected-access" })).resolves.toBe("new-access");
+    expect(String(fetchMock.mock.calls[0][1]?.body)).toContain("refresh_token=old-refresh");
+    const saved = JSON.parse(await readFile(credentialPath, "utf8"));
+    expect(saved.instances["https://example.com"]).toMatchObject({
+      accessToken: "new-access",
+      refreshToken: "new-refresh",
+    });
+  });
+
+  it("does not refresh again when another process already replaced the rejected token", async () => {
+    const credentialPath = await temporaryCredentialPath();
+    await mkdir(path.dirname(credentialPath), { recursive: true });
+    await writeFile(
+      credentialPath,
+      JSON.stringify({
+        version: 1,
+        instances: {
+          "https://example.com": {
+            clientId: "client-1",
+            resource: "https://example.com/api/v1",
+            accessToken: "newer-access",
+            refreshToken: "newer-refresh",
+            expiresAt: 3_600_000,
+          },
+        },
+      })
+    );
+    const fetchMock = vi.fn();
+    const getAccessToken = createStoredOAuthTokenProvider("https://example.com/api/v1", {
+      credentialPath,
+      fetch: fetchMock as typeof fetch,
+      now: () => 10_000,
+    });
+
+    await expect(getAccessToken({ rejected: "older-access" })).resolves.toBe("newer-access");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("retries a transient refresh failure without telling the user to sign in again", async () => {
@@ -273,7 +340,7 @@ describe("stored OAuth sessions", () => {
         const response = await fetch(callback);
         expect(response.status).toBe(200);
         expect(response.headers.get("content-type")).toContain("text/html");
-        expect(await response.text()).toContain("You can close this window");
+        expect(await response.text()).toContain("Device authorized");
       },
     });
 
@@ -373,9 +440,6 @@ describe("stored OAuth sessions", () => {
       clientId: "infracodebase-cli",
       scopes: ["read"],
     });
-    await expect(savedLoginScopes("https://example.com/api/v1", { credentialPath })).resolves.toEqual([
-      "read",
-    ]);
   });
 
   it("registers itself on deployments that predate the built-in client", async () => {

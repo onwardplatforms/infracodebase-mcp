@@ -17,7 +17,7 @@
  *   INFRACODEBASE_TOKEN    / --token=<token>     (legacy non-interactive override)
  */
 
-import { loadConfig, type ConfigOverrides } from "./config.js";
+import { DEFAULT_API_URL, loadConfig, type ConfigOverrides } from "./config.js";
 import { InfracodebaseClient } from "./client.js";
 import { startServer } from "./server.js";
 import { buildUsage } from "./cli/usage.js";
@@ -102,7 +102,21 @@ async function main() {
       case "logout": {
         const config = loadConfig({ apiUrl: overrides.apiUrl });
         const removed = await logout(config.apiUrl);
-        console.error(removed ? "Signed out." : "No saved login was found.");
+        const host = new URL(config.apiUrl).host;
+        const signIn = `npx -y @infracodebase/mcp@latest login${
+          config.apiUrl === DEFAULT_API_URL ? "" : ` --api-url ${config.apiUrl}`
+        }`;
+        console.error(
+          removed
+            ? `Signed out of ${host}. Your MCP clients can't reach InfraCodebase until you sign in again.`
+            : `You weren't signed in to ${host} on this computer, so nothing changed.`
+        );
+        console.error(`\nTo sign in, run:\n  ${signIn}`);
+        if (process.env.INFRACODEBASE_TOKEN) {
+          console.error(
+            "\nINFRACODEBASE_TOKEN is still set in this shell. Any MCP client that uses it stays signed in until you remove it."
+          );
+        }
         return;
       }
 

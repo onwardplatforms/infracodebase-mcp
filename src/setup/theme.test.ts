@@ -1,30 +1,29 @@
 import { styleText } from "node:util";
 import { describe, expect, it } from "vitest";
-import { brandColors } from "./theme.js";
+import { neutralColors, supportsHyperlinks } from "./theme.js";
 
 // Build the exact codes clack emits, regardless of whether this test runs in a TTY.
 const style = (format: Parameters<typeof styleText>[0], text: string) =>
   styleText(format, text, { validateStream: false });
 
-describe("brandColors", () => {
-  it("uses the app's exact success, error, and warning colors on 24-bit terminals", () => {
-    expect(brandColors(style("green", "◆"), 24)).toBe("\u001b[38;2;52;199;89m◆\u001b[39m");
-    expect(brandColors(style("red", "■"), 24)).toBe("\u001b[38;2;255;56;60m■\u001b[39m");
-    expect(brandColors(style("yellow", "▲"), 24)).toBe("\u001b[38;2;255;204;0m▲\u001b[39m");
+describe("neutralColors", () => {
+  it("turns clack's decorative colors into the default text color", () => {
+    for (const color of ["green", "blue", "magenta", "cyan"] as const) {
+      expect(neutralColors(style(color, "◆"))).toBe("\u001b[39m◆\u001b[39m");
+    }
   });
 
-  it("falls back to the nearest 256-color match", () => {
-    expect(brandColors(style("green", "◆"), 8)).toBe("\u001b[38;5;77m◆\u001b[39m");
+  it("leaves red, yellow, dim, and gray for the terminal theme to render", () => {
+    const text = `${style("red", "■")} ${style("yellow", "▲")} ${style("dim", "hint")} ${style("gray", "│")}`;
+    expect(neutralColors(text)).toBe(text);
   });
+});
 
-  it("replaces clack's cyan accent and magenta spinner with the default text color", () => {
-    expect(brandColors(style("cyan", "◻"), 24)).toBe("\u001b[39m◻\u001b[39m");
-    expect(brandColors(style("magenta", "◒"), 24)).toBe("\u001b[39m◒\u001b[39m");
-  });
-
-  it("leaves dim and gray text, and 16-color terminals, untouched", () => {
-    const text = `${style("dim", "hint")} ${style("gray", "│")}`;
-    expect(brandColors(text, 24)).toBe(text);
-    expect(brandColors(style("green", "◆"), 4)).toBe(style("green", "◆"));
+describe("supportsHyperlinks", () => {
+  it("says yes only for terminals known to make links clickable", () => {
+    expect(supportsHyperlinks({ TERM_PROGRAM: "iTerm.app" })).toBe(true);
+    expect(supportsHyperlinks({ WT_SESSION: "1" })).toBe(true);
+    expect(supportsHyperlinks({ TERM_PROGRAM: "Apple_Terminal" })).toBe(false);
+    expect(supportsHyperlinks({})).toBe(false);
   });
 });

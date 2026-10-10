@@ -1,7 +1,7 @@
 /** Configuration resolution for the infracodebase MCP server. */
 
 import { z } from "zod";
-import { createStoredOAuthTokenProvider } from "./oauth.js";
+import { createStoredOAuthTokenProvider, type AccessTokenProvider } from "./oauth.js";
 
 export const DEFAULT_API_URL = "https://infracodebase.com/api/v1";
 
@@ -9,7 +9,7 @@ const ApiUrlSchema = z.string().url();
 
 export interface Config {
   apiUrl: string;
-  getAccessToken: () => Promise<string>;
+  getAccessToken: AccessTokenProvider;
   authKind: "oauth" | "legacy_token";
 }
 
