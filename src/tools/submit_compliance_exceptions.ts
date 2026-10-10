@@ -28,6 +28,7 @@ const CALLER_CODES = new Set([
   "cannot_manage_compliance",
   "cannot_approve_compliance",
   "workspace_not_found",
+  "workspace_out_of_token_scope",
   "no_workspace_access",
   "not_an_enterprise_member",
 ]);
@@ -101,8 +102,8 @@ export const submitComplianceExceptions: ToolDef = {
         const code = err instanceof ApiError ? err.code : undefined;
         const error = err instanceof Error ? err.message : String(err);
         if (stopsBatch(err)) {
-          // Nothing went through: report it as a plain tool error.
-          if (requested.length === 0 && granted.length === 0) throw err;
+          // Nothing to report but this error: surface it as a plain tool error.
+          if (requested.length === 0 && granted.length === 0 && failed.length === 0) throw err;
           return {
             requested,
             granted,
@@ -112,6 +113,7 @@ export const submitComplianceExceptions: ToolDef = {
             next: [
               requested.length ? REQUESTED_NEXT : null,
               granted.length ? GRANTED_NEXT : null,
+              failed.length ? FAILED_NEXT : null,
               stoppedNext(code),
             ]
               .filter(Boolean)

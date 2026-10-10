@@ -12,7 +12,12 @@ describe("list_compliance_findings", () => {
   it("counts failures with no exception or a stale one, but not pending or active ones", async () => {
     const ctx = ctxWith([
       { rule_id: "a", status: "fail", exception: null },
-      { rule_id: "b", status: "fail", exception: { state: "stale" } },
+      { rule_id: "b", status: "fail", exception: { state: "stale", pending_request: null } },
+      {
+        rule_id: "b2",
+        status: "fail",
+        exception: { state: "stale", pending_request: { type: "risk_acceptance" } },
+      },
       { rule_id: "c", status: "fail", exception: { state: "pending" } },
       { rule_id: "d", status: "fail", exception: { state: "active" } },
       { rule_id: "e", status: "pass", exception: null },
