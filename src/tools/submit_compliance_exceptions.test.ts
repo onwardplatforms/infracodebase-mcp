@@ -134,6 +134,23 @@ describe("submit_compliance_exceptions", () => {
     expect(result.next).toContain("not_attempted");
   });
 
+  it("keeps earlier rule failures when a caller-level error stops the batch", async () => {
+    const submit = vi
+      .fn()
+      .mockRejectedValueOnce(apiError(404, "rule_not_found"))
+      .mockRejectedValueOnce(apiError(401, "unauthorized"));
+    const ctx = ctxWith({ submitComplianceException: submit });
+
+    const result = (await submitComplianceExceptions.run(ctx, {
+      workspace_id: "ws_1",
+      exceptions: leftovers,
+    })) as Result;
+
+    expect(result.failed).toEqual([expect.objectContaining({ rule_id: "lt_1", code: "rule_not_found" })]);
+    expect(result.stopped).toMatchObject({ code: "unauthorized" });
+    expect(result.not_attempted).toEqual(["im_7", "ns_1"]);
+  });
+
   it("offers to request instead when a grant is refused", async () => {
     const submit = vi
       .fn()

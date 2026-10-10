@@ -2,7 +2,7 @@ import type { ToolDef } from "./helpers.js";
 
 interface Finding {
   status?: string;
-  exception?: { state?: string } | null;
+  exception?: { state?: string; pending_request?: unknown } | null;
 }
 
 export const UNCOVERED_NEXT = (n: number) =>
@@ -33,7 +33,9 @@ export const listComplianceFindings: ToolDef = {
       (f) =>
         f.status === "fail" &&
         "exception" in f &&
-        (f.exception === null || f.exception?.state === "stale")
+        (f.exception === null ||
+          // A stale grant someone has already re-requested is handled.
+          (f.exception?.state === "stale" && !f.exception.pending_request))
     ).length;
     return uncovered > 0 ? { ...result, next: UNCOVERED_NEXT(uncovered) } : result;
   },
