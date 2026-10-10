@@ -55,7 +55,7 @@ A few terms show up throughout the tools.
 
 ## Tools
 
-The server gives your agent 18 tools, grouped into six areas. Your saved session is loaded and refreshed locally, so credentials never appear in tool arguments or MCP configuration. When in doubt, start with `get_workspace_context`. Called with no arguments it detects the repo from the client's workspace root or the directory the server was started in, and tells the agent everything it needs to know about that repo. Read-only tools are annotated as such, so clients that honor MCP annotations can run them without a permission prompt.
+The server gives your agent 23 tools, grouped into seven areas. Your saved session is loaded and refreshed locally, so credentials never appear in tool arguments or MCP configuration. When in doubt, start with `get_workspace_context`. Called with no arguments it detects the repo from the client's workspace root or the directory the server was started in, and tells the agent everything it needs to know about that repo. Read-only tools are annotated as such, so clients that honor MCP annotations can run them without a permission prompt.
 
 ### Workspace
 
@@ -80,6 +80,18 @@ The server gives your agent 18 tools, grouped into six areas. Your saved session
 | `trigger_compliance_evaluation` | Start a compliance run on the code you have already pushed to the linked branch. | `workspace_id`, `ref?`, `ruleset_id?`, `rule_id?`, `rule_ids?` |
 | `list_compliance_findings` | See the pass or fail result for each rule in a run. | `workspace_id`, `ref?`, `status?` |
 | `get_compliance_eval_spec` | See the exact instructions the compliance checker follows. | `workspace_id` |
+
+### Compliance exceptions
+
+For failing rules the code can't or shouldn't fix. An exception is either a **risk acceptance** (a real violation someone accepts) or **not applicable** (the rule doesn't apply at this level, like a control set per subscription or tenant). Everyone requests by default, and a compliance approver reviews. Approvers can grant directly, but only when they explicitly ask to. Exception decisions are recorded under your name, so they need your own sign-in or personal access token. Enterprise access tokens can't make them.
+
+| Tool | What it does | Key inputs |
+| --- | --- | --- |
+| `list_compliance_exceptions` | See active exceptions and requests waiting on an approver. | `workspace_id` |
+| `submit_compliance_exceptions` | Request exceptions for a batch of rules, or grant them if you're an approver and say so. | `workspace_id`, `exceptions[]` (`rule_id`, `type`, `justification`, `expires_in_days?`), `grant?` |
+| `approve_compliance_exception` | Approve a waiting request. Approvers only. Takes effect immediately. | `workspace_id`, `rule_id` |
+| `reject_compliance_exception` | Reject a waiting request with a reason. Approvers only. | `workspace_id`, `rule_id`, `reason` |
+| `revoke_compliance_exception` | End an exception so the rule is enforced again. Approvers only. | `workspace_id`, `rule_id` |
 
 ### Enterprise resources
 
