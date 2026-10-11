@@ -1,28 +1,55 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_API_URL, loadConfig } from "../config.js";
 import { findClient } from "./clients.js";
-import { parseClientIds, planPicker, serverLaunch, type ClientState, type ClientStatus } from "./init.js";
+import {
+  parseClientIds,
+  planPicker,
+  serverLaunch,
+  type ClientState,
+  type ClientStatus,
+} from "./init.js";
 
 function state(id: string, detected: boolean, status: ClientStatus): ClientState {
-  const existingApiUrl = status === "other-instance" ? "https://infracodebase.com/api/v1" : undefined;
+  const existingApiUrl =
+    status === "other-instance" ? "https://infracodebase.com/api/v1" : undefined;
   return { client: findClient(id)!, detected, status, existingApiUrl };
 }
 
 describe("serverLaunch", () => {
-  it("pins a dedicated instance's API URL and leaves the SaaS default implicit", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("pins both dedicated and SaaS instance API URLs", () => {
     expect(serverLaunch("https://nextera.example.com/api/v1", "linux")).toEqual({
       command: "npx",
       args: ["-y", "@infracodebase/mcp@latest", "--api-url", "https://nextera.example.com/api/v1"],
     });
     expect(serverLaunch("https://infracodebase.com/api/v1", "darwin")).toEqual({
       command: "npx",
-      args: ["-y", "@infracodebase/mcp@latest"],
+      args: ["-y", "@infracodebase/mcp@latest", "--api-url", "https://infracodebase.com/api/v1"],
     });
   });
+
+  it.each(["darwin", "win32"] as const)(
+    "keeps SaaS selected over an inherited dedicated URL on %s",
+    (platform) => {
+      vi.stubEnv("INFRACODEBASE_API_URL", "https://dedicated.example.com/api/v1");
+      const launch = serverLaunch(DEFAULT_API_URL, platform);
+      const flag = launch.args.indexOf("--api-url");
+      expect(loadConfig({ apiUrl: launch.args[flag + 1] }).apiUrl).toBe(DEFAULT_API_URL);
+    }
+  );
 
   it("runs npx through cmd on Windows, where clients cannot start a .cmd shim directly", () => {
     expect(serverLaunch("https://nextera.example.com/api/v1", "win32")).toEqual({
       command: "cmd",
-      args: ["/c", "npx", "-y", "@infracodebase/mcp@latest", "--api-url", "https://nextera.example.com/api/v1"],
+      args: [
+        "/c",
+        "npx",
+        "-y",
+        "@infracodebase/mcp@latest",
+        "--api-url",
+        "https://nextera.example.com/api/v1",
+      ],
     });
   });
 });
@@ -49,7 +76,9 @@ describe("planPicker", () => {
       state("cursor", true, "missing"),
       state("windsurf", false, "missing"),
     ]);
-    expect(plan.choices.map((choice) => [choice.client.id, choice.preselected, choice.hint])).toEqual([
+    expect(
+      plan.choices.map((choice) => [choice.client.id, choice.preselected, choice.hint])
+    ).toEqual([
       ["claude-code", true, "detected"],
       ["cursor", true, "detected"],
       ["windsurf", false, undefined],
@@ -69,7 +98,10 @@ describe("planPicker", () => {
   });
 
   it("never pre-checks a client pointed at another instance", () => {
-    const plan = planPicker([state("cursor", true, "other-instance"), state("codex", true, "current")]);
+    const plan = planPicker([
+      state("cursor", true, "other-instance"),
+      state("codex", true, "current"),
+    ]);
     expect(plan.choices).toEqual([
       expect.objectContaining({
         preselected: false,

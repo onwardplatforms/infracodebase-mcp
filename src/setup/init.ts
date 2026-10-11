@@ -8,12 +8,7 @@ import os from "node:os";
 import { styleText } from "node:util";
 import * as prompts from "@clack/prompts";
 import { ApiError, InfracodebaseClient, type Identity } from "../client.js";
-import { DEFAULT_API_URL } from "../config.js";
-import {
-  AuthSessionError,
-  createStoredOAuthTokenProvider,
-  login,
-} from "../oauth.js";
+import { AuthSessionError, createStoredOAuthTokenProvider, login } from "../oauth.js";
 import {
   clientsFor,
   normalizeApiUrl,
@@ -47,9 +42,10 @@ export interface InitOptions {
  * without a shell, so it runs through `cmd /c`.
  */
 export function serverLaunch(apiUrl: string, platform: NodeJS.Platform): ServerLaunch {
-  const args = ["-y", "@infracodebase/mcp@latest"];
-  if (apiUrl !== DEFAULT_API_URL) args.push("--api-url", apiUrl);
-  return platform === "win32" ? { command: "cmd", args: ["/c", "npx", ...args] } : { command: "npx", args };
+  const args = ["-y", "@infracodebase/mcp@latest", "--api-url", apiUrl];
+  return platform === "win32"
+    ? { command: "cmd", args: ["/c", "npx", ...args] }
+    : { command: "npx", args };
 }
 
 /** Split `--client a,b` into known clients, reporting any id we do not support. */
@@ -98,7 +94,9 @@ async function existingIdentity(apiUrl: string): Promise<Identity | null> {
 
 function describeIdentity(identity: Identity): string {
   const who = identity.email ? `Signed in as ${identity.email}` : "Signed in";
-  const names = identity.enterprises.flatMap((enterprise) => (enterprise.name ? [enterprise.name] : []));
+  const names = identity.enterprises.flatMap((enterprise) =>
+    enterprise.name ? [enterprise.name] : []
+  );
   if (names.length === 1) return `${who} (${names[0]})`;
   if (names.length > 1) return `${who} (${names.length} enterprises)`;
   return who;
@@ -194,7 +192,11 @@ export function planPicker(states: ClientState[]): PickerPlan {
   };
 }
 
-async function inspectClients(env: SetupEnv, apiUrl: string, clients: McpClient[]): Promise<ClientState[]> {
+async function inspectClients(
+  env: SetupEnv,
+  apiUrl: string,
+  clients: McpClient[]
+): Promise<ClientState[]> {
   return Promise.all(
     clients.map(async (client): Promise<ClientState> => {
       const existingApiUrl = await client.existingApiUrl(env);
@@ -215,7 +217,9 @@ function cancelled(): never {
 }
 
 function listOf(names: string[]): string {
-  return names.length <= 2 ? names.join(" and ") : `${names.slice(0, -1).join(", ")}, and ${names.at(-1)}`;
+  return names.length <= 2
+    ? names.join(" and ")
+    : `${names.slice(0, -1).join(", ")}, and ${names.at(-1)}`;
 }
 
 function labels(clients: McpClient[]): string {
@@ -224,7 +228,9 @@ function labels(clients: McpClient[]): string {
 
 /** End on what to do next, indented to line up under the first line. */
 function finish(lines: string[]): void {
-  prompts.outro(lines.map((line, index) => (index === 0 || line === "" ? line : `   ${line}`)).join("\n"));
+  prompts.outro(
+    lines.map((line, index) => (index === 0 || line === "" ? line : `   ${line}`)).join("\n")
+  );
 }
 
 /** The clients to configure now, plus how many were already set up. */
@@ -235,10 +241,14 @@ async function chooseClients(
   if (options.clientIds) {
     const { clients, unknown } = parseClientIds(options.clientIds, env.platform);
     if (unknown.length > 0) {
-      throw new Error(`Unknown client: ${unknown.join(", ")}. Choose from ${clientIdList(env.platform)}.`);
+      throw new Error(
+        `Unknown client: ${unknown.join(", ")}. Choose from ${clientIdList(env.platform)}.`
+      );
     }
     const states = await inspectClients(env, options.apiUrl, clients);
-    const current = states.filter((state) => state.status === "current").map((state) => state.client);
+    const current = states
+      .filter((state) => state.status === "current")
+      .map((state) => state.client);
     if (current.length > 0) prompts.log.info(`Already set up: ${labels(current)}`);
     return {
       clients: states.filter((state) => state.status !== "current").map((state) => state.client),
@@ -261,7 +271,10 @@ async function chooseClients(
   if (plan.choices.length === 0) return none;
 
   if (plan.nothingToSuggest) {
-    const more = await prompts.confirm({ message: "Add Infracodebase to another client?", initialValue: false });
+    const more = await prompts.confirm({
+      message: "Add Infracodebase to another client?",
+      initialValue: false,
+    });
     if (prompts.isCancel(more)) cancelled();
     if (!more) return none;
   }
@@ -276,12 +289,16 @@ async function chooseClients(
       label: choice.client.label,
       hint: choice.hint,
     })),
-    initialValues: plan.choices.filter((choice) => choice.preselected).map((choice) => choice.client.id),
+    initialValues: plan.choices
+      .filter((choice) => choice.preselected)
+      .map((choice) => choice.client.id),
     required: false,
   });
   if (prompts.isCancel(selected)) cancelled();
   return {
-    clients: plan.choices.map((choice) => choice.client).filter((client) => selected.includes(client.id)),
+    clients: plan.choices
+      .map((choice) => choice.client)
+      .filter((client) => selected.includes(client.id)),
     alreadySetUp: plan.current.length,
   };
 }
@@ -312,7 +329,11 @@ async function setUp(options: InitOptions): Promise<void> {
   const { clients, alreadySetUp } = await chooseClients(env, options);
   if (clients.length === 0) {
     if (alreadySetUp > 0) finish([...TRY_IT, "", dim(`Docs: ${docsUrl}`)]);
-    else finish(["No clients changed. You're signed in, so run init again to add one.", dim(`Docs: ${docsUrl}`)]);
+    else
+      finish([
+        "No clients changed. You're signed in, so run init again to add one.",
+        dim(`Docs: ${docsUrl}`),
+      ]);
     return;
   }
 
@@ -344,7 +365,10 @@ async function setUp(options: InitOptions): Promise<void> {
 
   const configured = clients.length - manual.length;
   if (configured === 0 && alreadySetUp === 0) {
-    finish(["Nothing was set up. Finish the steps above by hand, then restart your client.", dim(`Docs: ${docsUrl}`)]);
+    finish([
+      "Nothing was set up. Finish the steps above by hand, then restart your client.",
+      dim(`Docs: ${docsUrl}`),
+    ]);
     process.exitCode = 1;
     return;
   }
