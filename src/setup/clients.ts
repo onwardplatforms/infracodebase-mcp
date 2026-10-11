@@ -7,6 +7,7 @@
  * merge one entry into, leaving every other server untouched.
  */
 
+import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { constants, promises as fs } from "node:fs";
 import path from "node:path";
@@ -85,7 +86,8 @@ export function entryApiUrl(entry: unknown): string {
   if (Array.isArray(args)) {
     for (let i = 0; i < args.length; i++) {
       const arg = String(args[i]);
-      if (arg === "--api-url" && typeof args[i + 1] === "string") return normalizeApiUrl(args[i + 1]);
+      if (arg === "--api-url" && typeof args[i + 1] === "string")
+        return normalizeApiUrl(args[i + 1]);
       if (arg.startsWith("--api-url=")) return normalizeApiUrl(arg.slice("--api-url=".length));
     }
   }
@@ -106,7 +108,9 @@ async function jsonServerEntry(filePath: string, key: string): Promise<unknown> 
   if (text === undefined) return undefined;
   try {
     const servers = (JSON.parse(text) as Record<string, unknown>)?.[key];
-    return servers && typeof servers === "object" ? (servers as Record<string, unknown>)[SERVER_NAME] : undefined;
+    return servers && typeof servers === "object"
+      ? (servers as Record<string, unknown>)[SERVER_NAME]
+      : undefined;
   } catch {
     return undefined;
   }
@@ -133,9 +137,13 @@ export function codexServerEntry(toml: string): unknown {
   const body = tables.get(`mcp_servers.${SERVER_NAME}`);
   if (body === undefined) return undefined;
 
-  const strings = (text: string) => [...text.matchAll(/"((?:[^"\\]|\\.)*)"|'([^']*)'/g)].map((m) => m[1] ?? m[2]);
+  const strings = (text: string) =>
+    [...text.matchAll(/"((?:[^"\\]|\\.)*)"|'([^']*)'/g)].map((m) => m[1] ?? m[2]);
   const argsMatch = /^\s*args\s*=\s*\[([\s\S]*?)\]/m.exec(body);
-  const envText = tables.get(`mcp_servers.${SERVER_NAME}.env`) ?? /^\s*env\s*=\s*\{([^}]*)\}/m.exec(body)?.[1] ?? "";
+  const envText =
+    tables.get(`mcp_servers.${SERVER_NAME}.env`) ??
+    /^\s*env\s*=\s*\{([^}]*)\}/m.exec(body)?.[1] ??
+    "";
   const envUrl = /INFRACODEBASE_API_URL\s*=\s*(?:"([^"]*)"|'([^']*)')/.exec(envText);
   return {
     args: argsMatch ? strings(argsMatch[1]) : [],
@@ -194,7 +202,12 @@ export async function mergeJsonServer(
   }
 
   const existingServers = config[key];
-  if (existingServers !== undefined && (typeof existingServers !== "object" || existingServers === null || Array.isArray(existingServers))) {
+  if (
+    existingServers !== undefined &&
+    (typeof existingServers !== "object" ||
+      existingServers === null ||
+      Array.isArray(existingServers))
+  ) {
     throw new Error(`its "${key}" setting isn't an object`);
   }
   const servers = (existingServers ?? {}) as Record<string, unknown>;
@@ -224,7 +237,8 @@ function jsonClient(options: {
     label: options.label,
     platforms: options.platforms,
     detect: (env) => exists(options.installDir(env)),
-    existingApiUrl: async (env) => apiUrlOf(await jsonServerEntry(options.configFile(env), options.key)),
+    existingApiUrl: async (env) =>
+      apiUrlOf(await jsonServerEntry(options.configFile(env), options.key)),
     async install(env, launch) {
       const file = options.configFile(env);
       const entry = options.entry(launch);
@@ -260,6 +274,7 @@ function cliClient(options: {
   binary: string;
   /** Reads the client's existing entry from its own config, without running it. */
   readEntry: (env: SetupEnv) => Promise<unknown>;
+  configFile: (env: SetupEnv) => string;
   removeArgs: string[];
   addArgs: (launch: ServerLaunch) => string[];
   installHint: string;
@@ -273,14 +288,52 @@ function cliClient(options: {
       const addArgs = options.addArgs(launch);
       const manual = `Run: ${commandLine([options.binary, ...addArgs])}`;
       if (!(await env.hasCommand(options.binary))) {
-        return { ok: false, detail: `\`${options.binary}\` is not installed. ${options.installHint}`, manual };
+        return {
+          ok: false,
+          detail: `\`${options.binary}\` is not installed. ${options.installHint}`,
+          manual,
+        };
       }
-      // Replace any earlier entry so a re-run picks up a new API URL.
-      await env.run(options.binary, options.removeArgs);
-      const added = await env.run(options.binary, addArgs);
-      if (added.code !== 0) {
-        return { ok: false, detail: added.output.trim() || `\`${options.binary}\` exited with ${added.code}`, manual };
+      const file = options.configFile(env);
+      let backup: string | undefined;
+      try {
+        if ((await options.readEntry(env)) !== undefined) {
+          const backupPath = `${file}.infracodebase-rollback-${randomUUID()}`;
+          await fs.copyFile(file, backupPath, constants.COPYFILE_EXCL);
+          backup = backupPath;
+          const removed = await env.run(options.binary, options.removeArgs);
+          if (removed.code !== 0) {
+            throw new Error(
+              removed.output.trim() || `\`${options.binary}\` exited with ${removed.code}`
+            );
+          }
+        }
+        const added = await env.run(options.binary, addArgs);
+        if (added.code !== 0) {
+          throw new Error(added.output.trim() || `\`${options.binary}\` exited with ${added.code}`);
+        }
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        if (backup) {
+          try {
+            await fs.rename(backup, file);
+          } catch {
+            return {
+              ok: false,
+              detail: `Couldn't update ${options.label}: ${reason}. Restore your previous configuration from ${tildify(env, backup)}, then try again.`,
+              manual,
+            };
+          }
+        }
+        return {
+          ok: false,
+          detail: backup
+            ? `Couldn't update ${options.label}: ${reason}. Your previous configuration was restored.`
+            : reason,
+          manual,
+        };
       }
+      if (backup) await fs.rm(backup, { force: true });
       return { ok: true, detail: "added for every project", restart: false };
     },
   };
@@ -294,8 +347,18 @@ export const CLIENTS: McpClient[] = [
     // User-scope servers live at the top level of ~/.claude.json.
     readEntry: (env) =>
       jsonServerEntry(path.join(env.claudeConfigDir || env.home, ".claude.json"), "mcpServers"),
+    configFile: (env) => path.join(env.claudeConfigDir || env.home, ".claude.json"),
     removeArgs: ["mcp", "remove", SERVER_NAME, "--scope", "user"],
-    addArgs: (launch) => ["mcp", "add", SERVER_NAME, "--scope", "user", "--", launch.command, ...launch.args],
+    addArgs: (launch) => [
+      "mcp",
+      "add",
+      SERVER_NAME,
+      "--scope",
+      "user",
+      "--",
+      launch.command,
+      ...launch.args,
+    ],
     installHint: "Install Claude Code, then run init again.",
   }),
   jsonClient({
@@ -337,9 +400,12 @@ export const CLIENTS: McpClient[] = [
     label: "Codex CLI",
     binary: "codex",
     readEntry: async (env) => {
-      const toml = await readText(path.join(env.codexHome || path.join(env.home, ".codex"), "config.toml"));
+      const toml = await readText(
+        path.join(env.codexHome || path.join(env.home, ".codex"), "config.toml")
+      );
       return toml === undefined ? undefined : codexServerEntry(toml);
     },
+    configFile: (env) => path.join(env.codexHome || path.join(env.home, ".codex"), "config.toml"),
     removeArgs: ["mcp", "remove", SERVER_NAME],
     addArgs: (launch) => ["mcp", "add", SERVER_NAME, "--", launch.command, ...launch.args],
     installHint: "Install the Codex CLI, then run init again.",
@@ -367,7 +433,10 @@ function runCommand(command: string, args: string[]): Promise<{ code: number; ou
     // `shell: true`, so build the quoted command line ourselves.
     const child =
       process.platform === "win32"
-        ? spawn([command, ...args].map(windowsQuote).join(" "), { stdio: ["ignore", "pipe", "pipe"], shell: true })
+        ? spawn([command, ...args].map(windowsQuote).join(" "), {
+            stdio: ["ignore", "pipe", "pipe"],
+            shell: true,
+          })
         : spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
     let output = "";
     child.stdout.on("data", (chunk) => (output += chunk));
@@ -378,7 +447,8 @@ function runCommand(command: string, args: string[]): Promise<{ code: number; ou
 }
 
 async function onPath(command: string): Promise<boolean> {
-  const extensions = process.platform === "win32" ? (process.env.PATHEXT ?? ".EXE;.CMD").split(";") : [""];
+  const extensions =
+    process.platform === "win32" ? (process.env.PATHEXT ?? ".EXE;.CMD").split(";") : [""];
   for (const directory of (process.env.PATH ?? "").split(path.delimiter)) {
     if (!directory) continue;
     for (const extension of extensions) {

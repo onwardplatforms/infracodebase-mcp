@@ -42,7 +42,10 @@ describe("mergeJsonServer", () => {
   it("adds the server next to existing ones and backs up the original", async () => {
     const home = await temporaryHome();
     const file = path.join(home, "mcp.json");
-    const original = JSON.stringify({ theme: "dark", mcpServers: { github: { command: "gh-mcp" } } });
+    const original = JSON.stringify({
+      theme: "dark",
+      mcpServers: { github: { command: "gh-mcp" } },
+    });
     await writeFile(file, original);
 
     await expect(mergeJsonServer(file, "mcpServers", { command: "npx" })).resolves.toBe("created");
@@ -71,7 +74,9 @@ describe("mergeJsonServer", () => {
     const original = `{"mcpServers":{"infracodebase":{"command":"npx"}}}`;
     await writeFile(file, original);
 
-    await expect(mergeJsonServer(file, "mcpServers", { command: "npx" })).resolves.toBe("unchanged");
+    await expect(mergeJsonServer(file, "mcpServers", { command: "npx" })).resolves.toBe(
+      "unchanged"
+    );
 
     expect(await readFile(file, "utf8")).toBe(original);
     await expect(readFile(`${file}.bak`, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
@@ -83,7 +88,9 @@ describe("mergeJsonServer", () => {
     const original = `{\n  // my servers\n  "servers": {}\n}`;
     await writeFile(file, original);
 
-    await expect(mergeJsonServer(file, "servers", { command: "npx" })).rejects.toThrow("has comments");
+    await expect(mergeJsonServer(file, "servers", { command: "npx" })).rejects.toThrow(
+      "has comments"
+    );
 
     expect(await readFile(file, "utf8")).toBe(original);
   });
@@ -94,7 +101,9 @@ describe("existing config detection", () => {
     expect(entryApiUrl({ args: ["-y", "pkg", "--api-url", `${NEXTERA}/`] })).toBe(NEXTERA);
     expect(entryApiUrl({ args: [`--api-url=${NEXTERA}`] })).toBe(NEXTERA);
     expect(entryApiUrl({ args: [], env: { INFRACODEBASE_API_URL: NEXTERA } })).toBe(NEXTERA);
-    expect(entryApiUrl({ args: ["-y", "@infracodebase/mcp@2"] })).toBe("https://infracodebase.com/api/v1");
+    expect(entryApiUrl({ args: ["-y", "@infracodebase/mcp@2"] })).toBe(
+      "https://infracodebase.com/api/v1"
+    );
   });
 
   it("finds the Codex entry and its env subtable without touching other servers", () => {
@@ -130,7 +139,9 @@ INFRACODEBASE_API_URL = "${NEXTERA}"
     await mkdir(path.dirname(file), { recursive: true });
     await writeFile(
       file,
-      JSON.stringify({ mcpServers: { infracodebase: { command: "npx", args: ["-y", "@infracodebase/mcp@2"] } } })
+      JSON.stringify({
+        mcpServers: { infracodebase: { command: "npx", args: ["-y", "@infracodebase/mcp@2"] } },
+      })
     );
     expect(await cursor.existingApiUrl(env)).toBe("https://infracodebase.com/api/v1");
 
@@ -143,7 +154,9 @@ INFRACODEBASE_API_URL = "${NEXTERA}"
     await writeFile(
       path.join(home, ".claude.json"),
       JSON.stringify({
-        projects: { "/repo": { mcpServers: { infracodebase: { command: "npx", args: launch.args } } } },
+        projects: {
+          "/repo": { mcpServers: { infracodebase: { command: "npx", args: launch.args } } },
+        },
       })
     );
     const claude = findClient("claude-code")!;
@@ -153,7 +166,9 @@ INFRACODEBASE_API_URL = "${NEXTERA}"
 
     await writeFile(
       path.join(home, ".claude.json"),
-      JSON.stringify({ mcpServers: { infracodebase: { type: "stdio", command: "npx", args: launch.args } } })
+      JSON.stringify({
+        mcpServers: { infracodebase: { type: "stdio", command: "npx", args: launch.args } },
+      })
     );
     expect(await claude.existingApiUrl(fakeEnv(home))).toBe(NEXTERA);
   });
@@ -162,14 +177,86 @@ INFRACODEBASE_API_URL = "${NEXTERA}"
 describe("CLI-managed clients", () => {
   it("replaces any earlier Claude Code entry with a user-scope one", async () => {
     const run = vi.fn(async () => ({ code: 0, output: "" }));
-    const env = fakeEnv(await temporaryHome(), { hasCommand: async () => true, run });
+    const home = await temporaryHome();
+    await writeFile(
+      path.join(home, ".claude.json"),
+      JSON.stringify({ mcpServers: { infracodebase: { command: "old" } } })
+    );
+    const env = fakeEnv(home, { hasCommand: async () => true, run });
 
-    await expect(findClient("claude-code")!.install(env, launch)).resolves.toMatchObject({ ok: true });
+    await expect(findClient("claude-code")!.install(env, launch)).resolves.toMatchObject({
+      ok: true,
+    });
 
     expect(run.mock.calls).toEqual([
       ["claude", ["mcp", "remove", "infracodebase", "--scope", "user"]],
       ["claude", ["mcp", "add", "infracodebase", "--scope", "user", "--", "npx", ...launch.args]],
     ]);
+  });
+
+  it.each(["claude-code", "codex"])(
+    "restores the complete %s configuration when replacement fails",
+    async (id) => {
+      const home = await temporaryHome();
+      const file =
+        id === "codex" ? path.join(home, ".codex", "config.toml") : path.join(home, ".claude.json");
+      const original =
+        id === "codex"
+          ? '[mcp_servers.other]\ncommand = "other"\n[mcp_servers.infracodebase]\ncommand = "old-server"\nargs = ["--api-url", "https://old.example/api/v1"]\n'
+          : JSON.stringify({
+              theme: "dark",
+              mcpServers: {
+                other: { command: "other" },
+                infracodebase: {
+                  command: "old-server",
+                  args: ["--api-url", "https://old.example/api/v1"],
+                  env: { CUSTOM: "kept" },
+                },
+              },
+            });
+      await mkdir(path.dirname(file), { recursive: true });
+      await writeFile(file, original);
+      const run = vi.fn(async (_command: string, args: string[]) => {
+        await writeFile(
+          file,
+          id === "codex"
+            ? '[mcp_servers.other]\ncommand = "other"\n'
+            : '{"mcpServers":{"other":{"command":"other"}}}'
+        );
+        return args[1] === "add"
+          ? { code: 2, output: "replacement failed" }
+          : { code: 0, output: "" };
+      });
+      const env = fakeEnv(home, { hasCommand: async () => true, run });
+      const client = findClient(id)!;
+
+      await expect(client.install(env, launch)).resolves.toMatchObject({
+        ok: false,
+        detail: expect.stringContaining("previous configuration was restored"),
+      });
+      expect(await readFile(file, "utf8")).toBe(original);
+      expect(await client.existingApiUrl(env)).toBe("https://old.example/api/v1");
+      expect(run).toHaveBeenCalledTimes(2);
+    }
+  );
+
+  it("restores an existing configuration when the CLI throws after removing it", async () => {
+    const home = await temporaryHome();
+    const file = path.join(home, ".claude.json");
+    const original = JSON.stringify({ mcpServers: { infracodebase: { command: "old" } } });
+    await writeFile(file, original);
+    const run = vi.fn(async (_command: string, args: string[]) => {
+      await writeFile(file, "{}");
+      if (args[1] === "add") throw new Error("CLI unavailable");
+      return { code: 0, output: "" };
+    });
+    await expect(
+      findClient("claude-code")!.install(
+        fakeEnv(home, { hasCommand: async () => true, run }),
+        launch
+      )
+    ).resolves.toMatchObject({ ok: false });
+    expect(await readFile(file, "utf8")).toBe(original);
   });
 
   it("hands back the exact command when the client CLI is missing or fails", async () => {
@@ -185,7 +272,9 @@ describe("CLI-managed clients", () => {
       fakeEnv(home, {
         hasCommand: async () => true,
         run: async (_command, args) =>
-          args[1] === "add" ? { code: 2, output: "config.toml is read-only\n" } : { code: 0, output: "" },
+          args[1] === "add"
+            ? { code: 2, output: "config.toml is read-only\n" }
+            : { code: 0, output: "" },
       }),
       launch
     );
@@ -212,12 +301,14 @@ describe("operating systems", () => {
       path.join(home, "Library", "Application Support")
     );
     expect(
-      appConfigDir(fakeEnv(home, { platform: "win32", appData: path.join(home, "AppData", "Roaming") }))
+      appConfigDir(
+        fakeEnv(home, { platform: "win32", appData: path.join(home, "AppData", "Roaming") })
+      )
     ).toBe(path.join(home, "AppData", "Roaming"));
     expect(appConfigDir(fakeEnv(home, { platform: "linux" }))).toBe(path.join(home, ".config"));
-    expect(appConfigDir(fakeEnv(home, { platform: "linux", xdgConfigHome: path.join(home, "xdg") }))).toBe(
-      path.join(home, "xdg")
-    );
+    expect(
+      appConfigDir(fakeEnv(home, { platform: "linux", xdgConfigHome: path.join(home, "xdg") }))
+    ).toBe(path.join(home, "xdg"));
   });
 
   it("writes VS Code's config under %APPDATA% on Windows and $XDG_CONFIG_HOME on Linux", async () => {
@@ -226,12 +317,16 @@ describe("operating systems", () => {
 
     const windows = fakeEnv(home, { platform: "win32", appData: path.join(home, "Roaming") });
     await vscode.install(windows, launch);
-    expect(await readFile(path.join(home, "Roaming", "Code", "User", "mcp.json"), "utf8")).toContain(NEXTERA);
+    expect(
+      await readFile(path.join(home, "Roaming", "Code", "User", "mcp.json"), "utf8")
+    ).toContain(NEXTERA);
 
     const linux = fakeEnv(home, { platform: "linux", xdgConfigHome: path.join(home, "xdg") });
     await vscode.install(linux, launch);
     expect(await vscode.existingApiUrl(linux)).toBe(NEXTERA);
-    expect(await readFile(path.join(home, "xdg", "Code", "User", "mcp.json"), "utf8")).toContain(NEXTERA);
+    expect(await readFile(path.join(home, "xdg", "Code", "User", "mcp.json"), "utf8")).toContain(
+      NEXTERA
+    );
   });
 
   it("reads Codex and Claude Code config from CODEX_HOME and CLAUDE_CONFIG_DIR when set", async () => {
