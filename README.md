@@ -4,11 +4,11 @@
 [![node](https://img.shields.io/node/v/@infracodebase/mcp)](https://nodejs.org)
 [![license](https://img.shields.io/npm/l/@infracodebase/mcp)](https://github.com/onwardplatforms/infracodebase-mcp/blob/main/LICENSE)
 
-Give your AI coding agent access to [infracodebase](https://infracodebase.com) compliance, rulesets, and governance. This MCP server works with Claude Code, Claude Desktop, Cursor, VS Code, and any other MCP client.
+Give your AI coding agent access to [infracodebase](https://infracodebase.com) compliance, rulesets, and governance. This MCP server works with Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, Codex CLI, Devin, and any other MCP client that can launch a stdio server.
 
 ## Prerequisites
 
-- Node.js 20 or newer
+- Node.js 20.12 or newer, on the machine where the MCP server runs. The server is launched with `npx`, which ships with Node. Check with `node -v`; if the command is missing or older, install the current LTS from [nodejs.org](https://nodejs.org) or your package manager (for example `brew install node`, or `nvm install --lts`). Cloud agents need Node in their own environment, not just on your laptop; see [Devin and other cloud agents](#devin-and-other-cloud-agents).
 - An InfraCodebase account. Enterprise accounts may sign in through Microsoft Entra; SaaS accounts use their normal InfraCodebase sign-in. During login, InfraCodebase guides you to connect a personal version-control account when your enterprise requires one.
 
 ## Quickstart
@@ -19,7 +19,7 @@ Run one command in your terminal:
 npx -y @infracodebase/mcp@latest init
 ```
 
-It signs you in through your browser, finds the MCP clients installed on your machine, and adds the server to the ones you pick: Claude Code, Cursor, VS Code, Claude Desktop, Windsurf, or Codex CLI. Running it again is safe. It reuses your saved login and skips clients that are already set up.
+It signs you in through your browser, finds the MCP clients installed on your machine, and adds the server to the ones you pick: Claude Code, Cursor, VS Code, Claude Desktop, Windsurf, Devin Desktop, or Codex CLI. Using Devin in the cloud (app.devin.ai) or another agent that runs on a remote machine? `init` and `login` can't sign it in; follow [Devin and other cloud agents](#devin-and-other-cloud-agents) instead. Running it again is safe. It reuses your saved login and skips clients that are already set up.
 
 Login creates a renewable InfraCodebase session for the CLI. It does not copy a GitHub token or require a PAT. The full guide lives at [infracodebase.com/docs/developers/mcp](https://infracodebase.com/docs/developers/mcp).
 
@@ -33,7 +33,7 @@ claude mcp add infracodebase --scope user -- npx -y @infracodebase/mcp@latest
 
 `--scope user` registers the server once for every project. Without it, the server only exists in the directory you ran the command in and shows as disconnected everywhere else.
 
-For Claude Desktop, Cursor, Windsurf, or any other client, add the server to its `mcp.json`:
+For Claude Desktop, Cursor, Windsurf, Devin Desktop (`~/.config/devin/mcp_config.json`), or any other client, add the server to its MCP config file:
 
 ```json
 {
@@ -45,6 +45,49 @@ For Claude Desktop, Cursor, Windsurf, or any other client, add the server to its
   }
 }
 ```
+
+### Devin and other cloud agents
+
+This section is for Devin in the cloud (app.devin.ai). Devin Desktop, the local app formerly called Windsurf, runs on your machine, so `init` sets it up like any other client.
+
+Cloud agents run the MCP server on their own machine, not yours. `init` and `login` don't work there: browser sign-in sends you back to `127.0.0.1` on the computer whose browser you used, so it never reaches the agent's machine, and a login saved on your laptop isn't visible to it. Connect these agents with a personal access token instead.
+
+1. **Create a token.** Open `/settings/tokens` on your InfraCodebase instance ([infracodebase.com/settings/tokens](https://infracodebase.com/settings/tokens) for SaaS). Choose **Read and write** if the agent should set repos up or request compliance exceptions, or **Read-only** if it should only inspect. The token acts as you, with your permissions.
+2. **Give the agent Node.js 20.12 or newer.** In Devin, open **Settings → Environment → Blueprints → Organization blueprint**, add the step below under `initialize`, and save. Devin rebuilds its snapshot, so every session has `node` and `npx`.
+
+   ```yaml
+   initialize:
+     - name: Install Node.js for the InfraCodebase MCP server
+       uses: github.com/actions/setup-node@v4
+       with:
+         node-version: "20"
+   ```
+
+3. **Add the server.** In Devin, open **Customize → MCPs → Add MCP → Add custom MCP** (this needs the *Manage MCP Servers* permission) and fill in:
+
+   | Field | Value |
+   | --- | --- |
+   | Server Name | `infracodebase` |
+   | Transport | `STDIO` |
+   | Command | `npx` |
+   | Arguments | `-y` `@infracodebase/mcp@latest` |
+   | Environment Variables | `INFRACODEBASE_TOKEN`: your token, stored as a Devin secret |
+   | | `INFRACODEBASE_API_URL`: only for a self-hosted instance, for example `https://infra.your-company.com/api/v1` |
+
+   For reference, the equivalent configuration:
+
+   ```json
+   {
+     "transport": "STDIO",
+     "command": "npx",
+     "args": ["-y", "@infracodebase/mcp@latest"],
+     "env_variables": { "INFRACODEBASE_TOKEN": "icb_pat_xxx" }
+   }
+   ```
+
+4. **Test it in a session.** Devin can't test STDIO servers from the settings page, so choose **Use MCP** to start a session and ask: *"Call infracodebase get_workspace_context for this repo."*
+
+Other cloud or headless agents work the same way: make Node available, launch `npx -y @infracodebase/mcp@latest` over stdio, and set `INFRACODEBASE_TOKEN` (plus `INFRACODEBASE_API_URL` when self-hosted) in the server's environment.
 
 ## Concepts
 
@@ -144,11 +187,12 @@ Browser login stores OAuth credentials in `~/.config/infracodebase/credentials.j
 | ----------------- | ----------------------- | ---------------------------------- |
 | `--api-url=<url>` | `INFRACODEBASE_API_URL` | `https://infracodebase.com/api/v1` |
 
-`--token` / `INFRACODEBASE_TOKEN` remains available only as a legacy compatibility override for non-interactive automation.
+Where browser login can't work, such as cloud agents, CI, and other machines without your browser, set `INFRACODEBASE_TOKEN` (or `--token`) to a personal access token. When it is set, it takes precedence over a saved login.
 
 ## Troubleshooting
 
-- Missing or expired session. Run `npx -y @infracodebase/mcp@latest init` (or `login`). If a browser cannot open, add `--no-open` and open the printed URL yourself.
+- Missing or expired session. Run `npx -y @infracodebase/mcp@latest init` (or `login`). If a browser cannot open, add `--no-open` and open the printed URL yourself. In Devin or another cloud agent, use a token instead; see [Devin and other cloud agents](#devin-and-other-cloud-agents).
+- `npx: command not found`, or the server never starts. Node.js 20.12 or newer isn't installed where the server runs. Install it and restart your client. For Devin, add Node to the organization blueprint. If a client can't find `npx` even though it's installed (common with `nvm`), set the command to the full path from `which npx`.
 - TLS errors against a self-hosted instance. If your instance uses a private certificate authority, set `NODE_EXTRA_CA_CERTS` to the path of your root certificate.
 - `get_workspace_context` returns `unlinked`. No workspace governs the repo yet, so no rulesets are in force. Ask the agent to set the repo up: `plan_workspace_setup` finds the right enterprise and connection, proposes a workspace and rulesets, and lists the decisions that are yours. Once you confirm, `setup_workspace` creates and links the workspace and reloads the rules before any IaC is written.
 
