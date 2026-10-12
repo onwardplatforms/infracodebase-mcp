@@ -87,7 +87,10 @@ initialize:
 
 **Using a token?** Add it to the server's environment: `"env": { "INFRACODEBASE_TOKEN": "<your-token>" }` in a JSON config, or `--env INFRACODEBASE_TOKEN=<your-token>` before the `--` for Claude Code and Codex CLI.
 
-On Windows, start the server with `cmd /c npx …` instead of `npx …`. Self-hosted? See [Self-hosted](#self-hosted). The full guide lives at [infracodebase.com/docs/developers/mcp](https://infracodebase.com/docs/developers/mcp).
+> [!NOTE]
+> On Windows, MCP clients can't start `npx` directly. Use `"command": "cmd"` and put `"/c", "npx"` at the start of `args` (for Claude Code: `-- cmd /c npx -y …`). `init` does this for you.
+
+Self-hosted? See [Self-hosted](#self-hosted). The full guide lives at [infracodebase.com/docs/developers/mcp](https://infracodebase.com/docs/developers/mcp).
 
 ## Concepts
 
