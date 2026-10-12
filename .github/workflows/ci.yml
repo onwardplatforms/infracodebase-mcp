@@ -63,3 +63,31 @@ jobs:
           npm install -g ./infracodebase-mcp-*.tgz
           which infracodebase
           infracodebase --help
+
+  # init writes OS-specific config paths and launch commands (cmd /c npx on
+  # Windows), so exercise the setup code and the packaged CLI on Windows too.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup tests
+        run: npx vitest run src/setup
+
+      - name: Build
+        run: npm run build
+
+      - name: Test package installation
+        shell: pwsh
+        run: |
+          npm pack
+          npm install -g (Get-ChildItem infracodebase-mcp-*.tgz).FullName
+          infracodebase --help

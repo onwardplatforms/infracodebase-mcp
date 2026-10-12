@@ -4,7 +4,10 @@
  * CLI entry point for @infracodebase/mcp
  *
  * Usage:
- *   infracodebase            Start the MCP server (stdio transport, default)
+ *   infracodebase            In a terminal: same as `init`. Launched by an MCP
+ *                            client (stdio piped): start the MCP server
+ *   infracodebase init       Sign in and set up your MCP clients
+ *   infracodebase start      Always start the MCP server
  *   infracodebase login      Sign in through the browser
  *   infracodebase logout     Remove the saved session for this instance
  *   infracodebase help       Show usage
@@ -14,11 +17,12 @@
  *   INFRACODEBASE_TOKEN    / --token=<token>     (legacy non-interactive override)
  */
 
-import { loadConfig, type ConfigOverrides } from "./config.js";
+import { DEFAULT_API_URL, loadConfig, type ConfigOverrides } from "./config.js";
 import { InfracodebaseClient } from "./client.js";
 import { startServer } from "./server.js";
 import { buildUsage } from "./cli/usage.js";
 import { createStoredOAuthTokenProvider, login, logout } from "./oauth.js";
+import { runInit } from "./setup/init.js";
 
 /** Read `--name=value` or `--name value` from argv, returning undefined if absent. */
 function readFlag(argv: string[], name: string): string | undefined {
@@ -45,8 +49,15 @@ async function main() {
     apiUrl: readFlag(argv, "api-url"),
   };
 
+  // MCP clients always launch the server with piped stdio, so a bare command
+  // typed into a terminal is a person who wants to get set up.
+  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  const effectiveCommand =
+    command === undefined && interactive && !overrides.token ? "init" : command;
+  const noOpen = argv.includes("--no-open");
+
   try {
-    switch (command) {
+    switch (effectiveCommand) {
       case undefined:
       case "start": {
         const config = loadConfig(overrides);
@@ -54,9 +65,22 @@ async function main() {
         return;
       }
 
+      case "init": {
+        const config = loadConfig({ apiUrl: overrides.apiUrl });
+        const clientFlag = readFlag(argv, "client");
+        await runInit({
+          apiUrl: config.apiUrl,
+          noOpen,
+          clientIds: clientFlag
+            ?.split(",")
+            .map((id) => id.trim())
+            .filter(Boolean),
+        });
+        return;
+      }
+
       case "login": {
         const config = loadConfig({ apiUrl: overrides.apiUrl });
-        const noOpen = argv.includes("--no-open");
         await login(config.apiUrl, {
           onAuthorizationUrl: (url) => console.error(`Open this URL to continue:\n${url}`),
           openBrowser: noOpen ? async () => undefined : undefined,
@@ -78,7 +102,21 @@ async function main() {
       case "logout": {
         const config = loadConfig({ apiUrl: overrides.apiUrl });
         const removed = await logout(config.apiUrl);
-        console.error(removed ? "Signed out." : "No saved login was found.");
+        const host = new URL(config.apiUrl).host;
+        const signIn = `npx -y @infracodebase/mcp@latest login${
+          config.apiUrl === DEFAULT_API_URL ? "" : ` --api-url ${config.apiUrl}`
+        }`;
+        console.error(
+          removed
+            ? `Signed out of ${host}. Your MCP clients can't reach InfraCodebase until you sign in again.`
+            : `You weren't signed in to ${host} on this computer, so nothing changed.`
+        );
+        console.error(`\nTo sign in, run:\n  ${signIn}`);
+        if (process.env.INFRACODEBASE_TOKEN) {
+          console.error(
+            "\nINFRACODEBASE_TOKEN is still set in this shell. Any MCP client that uses it stays signed in until you remove it."
+          );
+        }
         return;
       }
 

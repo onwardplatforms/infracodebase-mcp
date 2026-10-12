@@ -36,6 +36,9 @@ src/
 ├── repo-detect.ts      repo auto-detection: argument, then client roots, then cwd git remote
 ├── cli/
 │   └── usage.ts        `help` / usage text
+├── setup/
+│   ├── init.ts         `init`: sign in, pick clients, report what changed
+│   └── clients.ts      supported MCP clients: detection, existing-config check, install
 └── tools/
     ├── index.ts            Self-documenting TOOLS[] registry + registerAllTools
     ├── helpers.ts          ToolContext, the registerTool wrapper, shared resolution

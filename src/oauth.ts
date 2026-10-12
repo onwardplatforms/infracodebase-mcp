@@ -20,6 +20,8 @@ interface StoredCredential {
   refreshToken: string;
   refreshRecoveryKey?: string;
   expiresAt: number;
+  /** Scopes the user approved. Missing on logins saved by older versions. */
+  scopes?: string[];
 }
 
 interface CredentialFile {
@@ -31,6 +33,8 @@ interface TokenResponse {
   access_token: string;
   refresh_token: string;
   expires_in: number;
+  /** Space-separated scopes the user approved, which may be fewer than requested. */
+  scope?: string;
 }
 
 interface OAuthErrorBody {
@@ -265,16 +269,26 @@ async function refreshCredentialWithRetry(
   throw lastError;
 }
 
+/**
+ * Hand out the saved access token, refreshing it when it is about to expire.
+ * Pass `rejected` with a token the API just refused to refresh even though its
+ * expiry looks fine, for example when this computer's clock runs behind.
+ */
+export type AccessTokenProvider = (options?: { rejected?: string }) => Promise<string>;
+
 export function createStoredOAuthTokenProvider(
   apiUrl: string,
   options: OAuthOptions = {}
-): () => Promise<string> {
+): AccessTokenProvider {
   const filePath = options.credentialPath ?? defaultCredentialPath();
   const fetchImpl = options.fetch ?? fetch;
   const now = options.now ?? Date.now;
   const origin = instanceOrigin(apiUrl);
 
-  return async () => {
+  const isCurrent = (credential: StoredCredential, rejected: string | undefined) =>
+    credential.accessToken !== rejected && credential.expiresAt > now() + REFRESH_SKEW_MS;
+
+  return async ({ rejected } = {}) => {
     const initial = (await readCredentialFile(filePath)).instances[origin];
     if (!initial) {
       throw new AuthSessionError(
@@ -282,7 +296,7 @@ export function createStoredOAuthTokenProvider(
         `No InfraCodebase login found for ${origin}. Run \`infracodebase login --api-url ${apiUrl}\`.`
       );
     }
-    if (initial.expiresAt > now() + REFRESH_SKEW_MS) return initial.accessToken;
+    if (isCurrent(initial, rejected)) return initial.accessToken;
 
     return withCredentialLock(filePath, async () => {
       const credentials = await readCredentialFile(filePath);
@@ -293,7 +307,8 @@ export function createStoredOAuthTokenProvider(
           `No InfraCodebase login found for ${origin}. Run \`infracodebase login --api-url ${apiUrl}\`.`
         );
       }
-      if (current.expiresAt > now() + REFRESH_SKEW_MS) return current.accessToken;
+      // Another process may have refreshed while this one waited for the lock.
+      if (isCurrent(current, rejected)) return current.accessToken;
 
       // Persist the recovery key before making the request. If the server
       // commits rotation but the response is lost, the next process can prove
@@ -414,12 +429,12 @@ type CallbackPageKind = "success" | "oauth_error" | "invalid_callback";
 function callbackPage(kind: CallbackPageKind): string {
   const copy = {
     success: {
-      title: "You’re signed in",
-      message: "You can close this window and return to your terminal.",
+      title: "Device authorized",
+      message: "You can return to your terminal.",
     },
     oauth_error: {
-      title: "InfraCodebase wasn’t connected",
-      message: "Return to your terminal for details, then try signing in again.",
+      title: "Device not authorized",
+      message: "Return to your terminal for details, then try again.",
     },
     invalid_callback: {
       title: "This sign-in link is invalid",
@@ -433,29 +448,25 @@ function callbackPage(kind: CallbackPageKind): string {
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>${copy.title}</title>
     <style>
-      :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      :root { color-scheme: light dark; font-family: "DM Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
       * { box-sizing: border-box; }
-      body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 24px; background: #fafafa; color: #171717; }
-      main { width: min(100%, 420px); padding: 32px; border: 1px solid #e5e5e5; border-radius: 12px; background: #fff; box-shadow: 0 1px 2px rgb(0 0 0 / 0.05); }
-      .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 28px; font-size: 16px; font-weight: 600; }
-      svg { width: 30px; height: 30px; }
-      h1 { margin: 0; font-size: 20px; line-height: 1.3; letter-spacing: -0.02em; }
-      p { margin: 10px 0 0; color: #737373; font-size: 14px; line-height: 1.55; }
+      body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 24px; background: hsl(0 0% 100%); color: hsl(240 10% 3.9%); }
+      main { width: min(100%, 400px); padding: 40px 32px; border: 1px solid hsl(240 5.9% 90%); border-radius: 12px; background: hsl(0 0% 94%); text-align: center; }
+      svg { display: block; width: 40px; height: 40px; margin: 0 auto; }
+      h1 { margin: 24px 0 0; font-size: 18px; font-weight: 600; line-height: 1.4; letter-spacing: -0.01em; }
+      p { margin: 8px 0 0; color: hsl(240 3.8% 46.1%); font-size: 14px; line-height: 1.5; }
       @media (prefers-color-scheme: dark) {
-        body { background: #0a0a0a; color: #fafafa; }
-        main { border-color: #262626; background: #171717; }
-        p { color: #a3a3a3; }
+        body { background: hsl(210 11% 11%); color: hsl(0 0% 98%); }
+        main { border-color: hsl(218 14% 25%); background: hsl(216 14% 14%); }
+        p { color: hsl(210 6% 65%); }
       }
     </style>
   </head>
   <body>
     <main>
-      <div class="brand">
-        <svg viewBox="0 0 600 600" fill="none" aria-hidden="true">
-          <path d="M555.523 266.927C537.221 248.2 507.146 248.031 488.635 266.552L272.469 482.83C250.959 504.351 215.983 504.053 194.843 482.169C174.212 460.811 174.513 426.857 195.519 405.868L407.619 193.944C428.738 172.843 428.782 138.625 407.716 117.469C386.579 96.2424 352.221 96.2219 331.058 117.424L115.052 333.834C96.158 352.763 65.5004 352.806 46.5535 333.929L45.2442 332.625C27.3184 314.765 26.9347 285.86 44.3802 267.531C62.442 248.554 92.5973 248.206 111.092 266.761L326.365 482.728C347.897 504.329 382.937 504.144 404.24 482.316C425.141 460.9 424.948 426.662 403.808 405.482L192.965 194.243C171.746 172.984 171.769 138.551 193.017 117.32C214.221 96.1348 248.565 96.0886 269.825 117.217L487.523 333.569C506.55 352.478 537.636 351.728 555.994 332.169C573.227 313.809 573.122 284.936 555.523 266.927Z" stroke="currentColor" stroke-width="45" />
-        </svg>
-        <span>Infracodebase</span>
-      </div>
+      <svg viewBox="0 0 600 600" fill="none" aria-hidden="true">
+        <path d="M555.523 266.927C537.221 248.2 507.146 248.031 488.635 266.552L272.469 482.83C250.959 504.351 215.983 504.053 194.843 482.169C174.212 460.811 174.513 426.857 195.519 405.868L407.619 193.944C428.738 172.843 428.782 138.625 407.716 117.469C386.579 96.2424 352.221 96.2219 331.058 117.424L115.052 333.834C96.158 352.763 65.5004 352.806 46.5535 333.929L45.2442 332.625C27.3184 314.765 26.9347 285.86 44.3802 267.531C62.442 248.554 92.5973 248.206 111.092 266.761L326.365 482.728C347.897 504.329 382.937 504.144 404.24 482.316C425.141 460.9 424.948 426.662 403.808 405.482L192.965 194.243C171.746 172.984 171.769 138.551 193.017 117.32C214.221 96.1348 248.565 96.0886 269.825 117.217L487.523 333.569C506.55 352.478 537.636 351.728 555.994 332.169C573.227 313.809 573.122 284.936 555.523 266.927Z" stroke="currentColor" stroke-width="45" />
+      </svg>
       <h1>${copy.title}</h1>
       <p>${copy.message}</p>
     </main>
@@ -474,8 +485,47 @@ function sendCallbackPage(
     "Cache-Control": "no-store",
     "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
     "X-Content-Type-Options": "nosniff",
+    Connection: "close",
   });
   response.end(callbackPage(kind), onSent);
+}
+
+/**
+ * The CLI's built-in client ID, when this deployment has one. Older
+ * deployments answer 404, and the CLI registers itself there instead.
+ */
+async function builtInClientId(origin: string, fetchImpl: typeof fetch): Promise<string | null> {
+  try {
+    const response = await fetchImpl(`${origin}/api/mcp/oauth/cli`, {
+      signal: AbortSignal.timeout(OAUTH_FETCH_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+    const body = (await response.json()) as { client_id?: unknown };
+    return typeof body.client_id === "string" && body.client_id ? body.client_id : null;
+  } catch {
+    return null;
+  }
+}
+
+async function registerClient(
+  origin: string,
+  redirectUri: string,
+  fetchImpl: typeof fetch
+): Promise<string> {
+  const response = await fetchImpl(`${origin}/api/mcp/oauth/register`, {
+    method: "POST",
+    signal: AbortSignal.timeout(OAUTH_FETCH_TIMEOUT_MS),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      client_name: "InfraCodebase CLI",
+      client_uri: "https://github.com/onwardplatforms/infracodebase-mcp",
+      redirect_uris: [redirectUri],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    }),
+  });
+  return (await responseJson<RegistrationResponse>(response, "Registering the CLI")).client_id;
 }
 
 export async function login(apiUrl: string, options: LoginOptions = {}): Promise<void> {
@@ -545,26 +595,12 @@ export async function login(apiUrl: string, options: LoginOptions = {}): Promise
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Could not start OAuth callback.");
     const redirectUri = `http://127.0.0.1:${address.port}/oauth/callback`;
-    const registrationResponse = await fetchImpl(`${origin}/api/mcp/oauth/register`, {
-      method: "POST",
-      signal: AbortSignal.timeout(OAUTH_FETCH_TIMEOUT_MS),
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        client_name: "InfraCodebase CLI",
-        client_uri: "https://github.com/onwardplatforms/infracodebase-mcp",
-        redirect_uris: [redirectUri],
-        grant_types: ["authorization_code", "refresh_token"],
-        response_types: ["code"],
-        token_endpoint_auth_method: "none",
-      }),
-    });
-    const registration = await responseJson<RegistrationResponse>(
-      registrationResponse,
-      "Registering the CLI"
-    );
+    const clientId =
+      (await builtInClientId(origin, fetchImpl)) ??
+      (await registerClient(origin, redirectUri, fetchImpl));
     const authorizationUrl = new URL("/mcp/authorize", origin);
     authorizationUrl.search = new URLSearchParams({
-      client_id: registration.client_id,
+      client_id: clientId,
       redirect_uri: redirectUri,
       response_type: "code",
       resource,
@@ -599,7 +635,7 @@ export async function login(apiUrl: string, options: LoginOptions = {}): Promise
         grant_type: "authorization_code",
         code: result.code,
         redirect_uri: redirectUri,
-        client_id: registration.client_id,
+        client_id: clientId,
         resource,
         code_verifier: verifier,
       }),
@@ -608,16 +644,21 @@ export async function login(apiUrl: string, options: LoginOptions = {}): Promise
     await withCredentialLock(filePath, async () => {
       const credentials = await readCredentialFile(filePath);
       credentials.instances[origin] = {
-        clientId: registration.client_id,
+        clientId,
         resource,
         accessToken: tokens.access_token,
         refreshToken: tokens.refresh_token,
         refreshRecoveryKey: randomUrlSafe(),
         expiresAt: now() + tokens.expires_in * 1000,
+        scopes: tokens.scope?.split(/\s+/).filter(Boolean),
       };
       await writeCredentialFile(filePath, credentials);
     });
   } finally {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    // close() waits for every open socket, and browsers keep spare connections
+    // to the callback port open, so drop them or login never returns.
+    const closed = new Promise<void>((resolve) => server.close(() => resolve()));
+    server.closeAllConnections();
+    await closed;
   }
 }

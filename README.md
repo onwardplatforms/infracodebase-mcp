@@ -13,32 +13,34 @@ Give your AI coding agent access to [infracodebase](https://infracodebase.com) c
 
 ## Quickstart
 
-Sign in once through your browser. This creates a renewable InfraCodebase session for the CLI; it does not copy a GitHub token or require a PAT.
+Run one command in your terminal:
 
 ```bash
-npx -y @infracodebase/mcp@2 login
+npx -y @infracodebase/mcp@latest init
 ```
 
-Then connect the server to your MCP client. The full guide lives at [infracodebase.com/docs/developers/mcp](https://infracodebase.com/docs/developers/mcp).
+It signs you in through your browser, finds the MCP clients installed on your machine, and adds the server to the ones you pick: Claude Code, Cursor, VS Code, Claude Desktop, Windsurf, or Codex CLI. Running it again is safe. It reuses your saved login and skips clients that are already set up.
 
-### Claude Code
+Login creates a renewable InfraCodebase session for the CLI. It does not copy a GitHub token or require a PAT. The full guide lives at [infracodebase.com/docs/developers/mcp](https://infracodebase.com/docs/developers/mcp).
+
+### Manual setup
+
+`init` writes these entries for you. To add one by hand, sign in with `npx -y @infracodebase/mcp@latest login`, then:
 
 ```bash
-claude mcp add infracodebase --scope user -- npx -y @infracodebase/mcp@2
+claude mcp add infracodebase --scope user -- npx -y @infracodebase/mcp@latest
 ```
 
 `--scope user` registers the server once for every project. Without it, the server only exists in the directory you ran the command in and shows as disconnected everywhere else.
 
-### Claude Desktop, Cursor, or any other client
-
-Add the server to your `mcp.json`.
+For Claude Desktop, Cursor, Windsurf, or any other client, add the server to its `mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "infracodebase": {
       "command": "npx",
-      "args": ["-y", "@infracodebase/mcp@2"]
+      "args": ["-y", "@infracodebase/mcp@latest"]
     }
   }
 }
@@ -121,19 +123,13 @@ Once connected, prompts like these work well.
 
 ## Self-hosted
 
-Use the same API URL when you log in and configure the MCP server.
+Pass your instance's API URL to `init`. It signs you in to that instance and writes the same URL into every client it sets up, so the two always match.
 
 ```bash
-npx -y @infracodebase/mcp@2 login --api-url https://infra.your-company.com/api/v1
+npx -y @infracodebase/mcp@latest init --api-url https://infra.your-company.com/api/v1
 ```
 
-```json
-"env": {
-  "INFRACODEBASE_API_URL": "https://infra.your-company.com/api/v1"
-}
-```
-
-No public npm access? Run it from a clone instead. Build it, then point your client at `node /abs/path/to/dist/index.js` with the same `env`.
+No public npm access? Run it from a clone instead. Build it, then point your client at `node /abs/path/to/dist/index.js --api-url https://infra.your-company.com/api/v1`.
 
 ```bash
 git clone https://github.com/onwardplatforms/infracodebase-mcp.git
@@ -152,20 +148,23 @@ Browser login stores OAuth credentials in `~/.config/infracodebase/credentials.j
 
 ## Troubleshooting
 
-- Missing or expired session. Run `npx -y @infracodebase/mcp@2 login`. If a browser cannot open, add `--no-open` and open the printed URL yourself.
+- Missing or expired session. Run `npx -y @infracodebase/mcp@latest init` (or `login`). If a browser cannot open, add `--no-open` and open the printed URL yourself.
 - TLS errors against a self-hosted instance. If your instance uses a private certificate authority, set `NODE_EXTRA_CA_CERTS` to the path of your root certificate.
 - `get_workspace_context` returns `unlinked`. No workspace governs the repo yet, so no rulesets are in force. Ask the agent to set the repo up: `plan_workspace_setup` finds the right enterprise and connection, proposes a workspace and rulesets, and lists the decisions that are yours. Once you confirm, `setup_workspace` creates and links the workspace and reloads the rules before any IaC is written.
 
 ## CLI
 
-You rarely run this yourself, since your MCP client starts it for you. When you do, use the `npx` form, or `infracodebase` and `infracodebase-mcp` if you installed it globally.
+Use the `npx` form, or `infracodebase` and `infracodebase-mcp` if you installed it globally. Run with no command in a terminal, the CLI starts `init`. Launched by an MCP client, it starts the server.
 
 ```bash
-npx -y @infracodebase/mcp@2          # Start the server over stdio (default)
-npx -y @infracodebase/mcp@2 login    # Sign in and save a renewable session
-npx -y @infracodebase/mcp@2 logout   # Revoke and remove the saved session
-npx -y @infracodebase/mcp@2 help     # Print full usage
+npx -y @infracodebase/mcp@latest init     # Sign in and set up your MCP clients
+npx -y @infracodebase/mcp@latest start    # Start the server over stdio
+npx -y @infracodebase/mcp@latest login    # Sign in and save a renewable session
+npx -y @infracodebase/mcp@latest logout   # Revoke and remove the saved session
+npx -y @infracodebase/mcp@latest help     # Print full usage
 ```
+
+For scripted setup, skip the picker with `--client`, for example `init --client claude-code,cursor`.
 
 ## Development
 
