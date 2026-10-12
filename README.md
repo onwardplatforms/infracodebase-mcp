@@ -55,7 +55,17 @@ On Windows, `npx` is a `.cmd` script that most clients can't start directly. Use
 
 ### Devin and other cloud agents
 
-This section is for Devin in the cloud (app.devin.ai). Devin Desktop, the local app formerly called Windsurf, runs on your machine, so `init` sets it up like any other client.
+Devin comes in two forms, and they connect differently:
+
+| | Devin Desktop | Devin in the cloud |
+| --- | --- | --- |
+| What it is | The local app, formerly Windsurf | Devin at app.devin.ai, on a Devin-managed machine |
+| Where the MCP server runs | Your computer | Devin's machine |
+| Node.js | Install on your computer | Add to Devin's organization blueprint |
+| Sign-in | Browser login, like other local clients | Personal access token in `INFRACODEBASE_TOKEN` |
+| Setup | `npx -y @infracodebase/mcp@latest init` and pick Devin Desktop (or `init --client devin`) | The steps below |
+
+The rest of this section covers Devin in the cloud and any other agent that runs on a remote machine.
 
 Cloud agents run the MCP server on their own machine, not yours. `init` and `login` don't work there: browser sign-in sends you back to `127.0.0.1` on the computer whose browser you used, so it never reaches the agent's machine, and a login saved on your laptop isn't visible to it. Connect these agents with a personal access token instead.
 
