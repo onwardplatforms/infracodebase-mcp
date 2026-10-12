@@ -23,13 +23,15 @@ Signs you in through your browser and adds InfraCodebase to the MCP clients on y
 
 ### Manual
 
-**1. Sign in** with your browser:
+**1. Authenticate**, in one of two ways:
 
-```bash
-npx -y @infracodebase/mcp@latest login
-```
+- **Sign in with the CLI.** Opens your browser and saves a renewable session on this machine, so your client config stays free of secrets.
 
-Or [create a token](https://infracodebase.com/settings/tokens) instead. Use a token for agents that run in the cloud, like Devin, and for CI, where browser login can't reach the machine. Choose **Read and write** if the agent should set up repos or request exceptions.
+  ```bash
+  npx -y @infracodebase/mcp@latest login
+  ```
+
+- **Access token (legacy).** [Create a token](https://infracodebase.com/settings/tokens), then add it to the server's environment in step 2: `"env": { "INFRACODEBASE_TOKEN": "<your-token>" }` in a JSON config, or `--env INFRACODEBASE_TOKEN=<your-token>` before the `--` for Claude Code and Codex CLI. Use a token where browser sign-in can't reach the machine, such as Devin in the cloud and CI. Choose **Read and write** if the agent should set up repos or request exceptions.
 
 **2. Add the server to your client.**
 
@@ -84,8 +86,6 @@ initialize:
 ```
 
 </details>
-
-**Using a token?** Add it to the server's environment: `"env": { "INFRACODEBASE_TOKEN": "<your-token>" }` in a JSON config, or `--env INFRACODEBASE_TOKEN=<your-token>` before the `--` for Claude Code and Codex CLI.
 
 > [!NOTE]
 > On Windows, MCP clients can't start `npx` directly. Use `"command": "cmd"` and put `"/c", "npx"` at the start of `args` (for Claude Code: `-- cmd /c npx -y …`). `init` does this for you.
