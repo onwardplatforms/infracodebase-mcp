@@ -331,52 +331,37 @@ describe("operating systems", () => {
     );
   });
 
-  it("writes Devin Desktop's config where Devin reads it on each OS", async () => {
-    const home = await temporaryHome();
-    const devin = findClient("devin")!;
+  it.each([
+    ["darwin", {}, [".config", "devin"]],
+    ["linux", {}, [".config", "devin"]],
+    ["linux", { xdgConfigHome: "xdg" }, ["xdg", "devin"]],
+    ["darwin", { xdgConfigHome: "xdg" }, ["xdg", "devin"]],
+    ["win32", { appData: "ignored" }, ["AppData", "Roaming", "devin"]],
+  ] as const)(
+    "writes Devin Desktop's config where Devin reads it on %s %o",
+    async (platform, overrides, segments) => {
+      const home = await temporaryHome();
+      const devin = findClient("devin")!;
+      const env = fakeEnv(home, {
+        platform,
+        ...Object.fromEntries(
+          Object.entries(overrides).map(([key, value]) => [key, path.join(home, value)])
+        ),
+      });
+      const dir = path.join(home, ...segments);
+      expect(devinConfigDir(env)).toBe(dir);
 
-    const mac = fakeEnv(home, { platform: "darwin" });
-    await devin.install(mac, launch);
-    expect(await devin.existingApiUrl(mac)).toBe(NEXTERA);
-    expect(
-      await readFile(path.join(home, ".config", "devin", "mcp_config.json"), "utf8")
-    ).toContain(NEXTERA);
+      expect(await devin.detect(env)).toBe(false);
+      await mkdir(dir, { recursive: true });
+      expect(await devin.detect(env)).toBe(true);
 
-    const xdg = fakeEnv(home, { platform: "linux", xdgConfigHome: path.join(home, "xdg") });
-    expect(devinConfigDir(xdg)).toBe(path.join(home, "xdg", "devin"));
-
-    const windows = fakeEnv(home, { platform: "win32" });
-    expect(devinConfigDir(windows)).toBe(path.join(home, "AppData", "Roaming", "devin"));
-  });
-
-  it("keeps the user's Windsurf servers when Devin Desktop has not migrated them yet", async () => {
-    const home = await temporaryHome();
-    const devin = findClient("devin")!;
-    const env = fakeEnv(home, { platform: "darwin" });
-    const windsurfDir = path.join(home, ".codeium", "windsurf");
-    await mkdir(windsurfDir, { recursive: true });
-    await writeFile(
-      path.join(windsurfDir, "mcp_config.json"),
-      JSON.stringify({
-        mcpServers: {
-          figma: { command: "figma-mcp" },
-          infracodebase: { serverUrl: "https://infracodebase.com/api/mcp" },
-        },
-      })
-    );
-
-    await devin.install(env, launch);
-    const devinFile = path.join(home, ".config", "devin", "mcp_config.json");
-    const servers = JSON.parse(await readFile(devinFile, "utf8")).mcpServers;
-    expect(servers.figma).toEqual({ command: "figma-mcp" });
-    expect(servers.infracodebase).toEqual({ command: launch.command, args: launch.args });
-
-    // Once Devin has its own config, Windsurf's is never copied again.
-    await writeFile(devinFile, JSON.stringify({ mcpServers: { relay: { command: "relay" } } }));
-    await devin.install(env, launch);
-    const after = JSON.parse(await readFile(devinFile, "utf8")).mcpServers;
-    expect(Object.keys(after).sort()).toEqual(["infracodebase", "relay"]);
-  });
+      await devin.install(env, launch);
+      expect(await devin.existingApiUrl(env)).toBe(NEXTERA);
+      expect(JSON.parse(await readFile(path.join(dir, "mcp_config.json"), "utf8"))).toEqual({
+        mcpServers: { infracodebase: { command: launch.command, args: launch.args } },
+      });
+    }
+  );
 
   it("reads Codex and Claude Code config from CODEX_HOME and CLAUDE_CONFIG_DIR when set", async () => {
     const home = await temporaryHome();

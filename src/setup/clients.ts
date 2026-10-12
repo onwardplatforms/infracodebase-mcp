@@ -180,32 +180,6 @@ export function devinConfigDir(env: SetupEnv): string {
   return path.join(env.xdgConfigHome || path.join(env.home, ".config"), "devin");
 }
 
-/** Whether Devin would treat this file as already holding MCP config. */
-async function hasJsonConfig(file: string): Promise<boolean> {
-  const text = (await readText(file))?.trim();
-  if (!text || text === "{}") return false;
-  try {
-    JSON.parse(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Devin Desktop copies ~/.codeium/windsurf/mcp_config.json into its own config
- * folder once, and only when its own file is missing or empty. Writing our
- * entry first would skip that copy and drop the user's other Windsurf servers,
- * so make the same copy before merging.
- */
-export async function carryOverWindsurfServers(env: SetupEnv, devinFile: string): Promise<void> {
-  if (await hasJsonConfig(devinFile)) return;
-  const windsurfFile = path.join(env.home, ".codeium", "windsurf", "mcp_config.json");
-  if (!(await hasJsonConfig(windsurfFile))) return;
-  await fs.mkdir(path.dirname(devinFile), { recursive: true });
-  await fs.copyFile(windsurfFile, devinFile);
-}
-
 /**
  * Merge `entry` into `config[key][SERVER_NAME]` in a JSON file, creating the
  * file if needed. An existing file is backed up to `<file>.bak` first, and a
@@ -267,8 +241,6 @@ function jsonClient(options: {
   configFile: (env: SetupEnv) => string;
   key: string;
   entry: (launch: ServerLaunch) => Record<string, unknown>;
-  /** Runs before the entry is merged, for example to carry over older config. */
-  prepare?: (env: SetupEnv, file: string) => Promise<void>;
 }): McpClient {
   return {
     id: options.id,
@@ -281,7 +253,6 @@ function jsonClient(options: {
       const file = options.configFile(env);
       const entry = options.entry(launch);
       try {
-        await options.prepare?.(env, file);
         const outcome = await mergeJsonServer(file, options.key, entry);
         return {
           ok: true,
@@ -434,8 +405,8 @@ export const CLIENTS: McpClient[] = [
     key: "mcpServers",
     entry: (launch) => ({ command: launch.command, args: launch.args }),
   }),
-  // Devin Desktop moved MCP servers out of ~/.codeium/windsurf. It copies the
-  // old file over once, then reads only this one; prepare makes that copy too.
+  // Devin Desktop (formerly Windsurf) reads MCP servers from Devin's own
+  // config folder, not ~/.codeium/windsurf.
   jsonClient({
     id: "devin",
     label: "Devin Desktop",
@@ -443,7 +414,6 @@ export const CLIENTS: McpClient[] = [
     configFile: (env) => path.join(devinConfigDir(env), "mcp_config.json"),
     key: "mcpServers",
     entry: (launch) => ({ command: launch.command, args: launch.args }),
-    prepare: carryOverWindsurfServers,
   }),
   cliClient({
     id: "codex",

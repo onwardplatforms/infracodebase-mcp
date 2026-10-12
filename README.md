@@ -8,7 +8,12 @@ Give your AI coding agent access to [infracodebase](https://infracodebase.com) c
 
 ## Prerequisites
 
-- Node.js 20.12 or newer, on the machine where the MCP server runs. The server is launched with `npx`, which ships with Node. Check with `node -v`; if the command is missing or older, install the current LTS from [nodejs.org](https://nodejs.org) or your package manager (for example `brew install node`, or `nvm install --lts`). Cloud agents need Node in their own environment, not just on your laptop; see [Devin and other cloud agents](#devin-and-other-cloud-agents).
+- Node.js 20.12 or newer, on the machine where the MCP server runs. The server is launched with `npx`, which ships with Node. Check with `node -v`. If the command is missing or older, install the current LTS from [nodejs.org](https://nodejs.org) or a package manager:
+  - macOS: `brew install node`
+  - Linux: your distribution's packages ([NodeSource](https://github.com/nodesource/distributions) has current versions), or `nvm install --lts`
+  - Windows: `winget install OpenJS.NodeJS.LTS`
+
+  Restart your MCP client afterward so it picks up the new `PATH`. Cloud agents need Node in their own environment, not just on your laptop; see [Devin and other cloud agents](#devin-and-other-cloud-agents).
 - An InfraCodebase account. Enterprise accounts may sign in through Microsoft Entra; SaaS accounts use their normal InfraCodebase sign-in. During login, InfraCodebase guides you to connect a personal version-control account when your enterprise requires one.
 
 ## Quickstart
@@ -33,7 +38,7 @@ claude mcp add infracodebase --scope user -- npx -y @infracodebase/mcp@latest
 
 `--scope user` registers the server once for every project. Without it, the server only exists in the directory you ran the command in and shows as disconnected everywhere else.
 
-For Claude Desktop, Cursor, Windsurf, Devin Desktop (`~/.config/devin/mcp_config.json`), or any other client, add the server to its MCP config file:
+For Claude Desktop, Cursor, Windsurf, Devin Desktop, or any other client, add the server to its MCP config file. Devin Desktop reads `~/.config/devin/mcp_config.json` on macOS and Linux (`$XDG_CONFIG_HOME/devin/` when that is set) and `%USERPROFILE%\AppData\Roaming\devin\mcp_config.json` on Windows.
 
 ```json
 {
@@ -45,6 +50,8 @@ For Claude Desktop, Cursor, Windsurf, Devin Desktop (`~/.config/devin/mcp_config
   }
 }
 ```
+
+On Windows, `npx` is a `.cmd` script that most clients can't start directly. Use `"command": "cmd"` with `"args": ["/c", "npx", "-y", "@infracodebase/mcp@latest"]`. `init` does this for you.
 
 ### Devin and other cloud agents
 
@@ -192,7 +199,7 @@ Where browser login can't work, such as cloud agents, CI, and other machines wit
 ## Troubleshooting
 
 - Missing or expired session. Run `npx -y @infracodebase/mcp@latest init` (or `login`). If a browser cannot open, add `--no-open` and open the printed URL yourself. In Devin or another cloud agent, use a token instead; see [Devin and other cloud agents](#devin-and-other-cloud-agents).
-- `npx: command not found`, or the server never starts. Node.js 20.12 or newer isn't installed where the server runs. Install it and restart your client. For Devin, add Node to the organization blueprint. If a client can't find `npx` even though it's installed (common with `nvm`), set the command to the full path from `which npx`.
+- `npx: command not found`, or the server never starts. Node.js 20.12 or newer isn't installed where the server runs. Install it and restart your client. For Devin, add Node to the organization blueprint. If a client can't find `npx` even though it's installed (common with `nvm`), set the command to the full path from `which npx` (macOS and Linux) or `where npx` (Windows).
 - TLS errors against a self-hosted instance. If your instance uses a private certificate authority, set `NODE_EXTRA_CA_CERTS` to the path of your root certificate.
 - `get_workspace_context` returns `unlinked`. No workspace governs the repo yet, so no rulesets are in force. Ask the agent to set the repo up: `plan_workspace_setup` finds the right enterprise and connection, proposes a workspace and rulesets, and lists the decisions that are yours. Once you confirm, `setup_workspace` creates and links the workspace and reloads the rules before any IaC is written.
 
