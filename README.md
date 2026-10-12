@@ -8,13 +8,9 @@ Give your AI coding agent access to [infracodebase](https://infracodebase.com) c
 
 ## Prerequisites
 
-- Node.js 20.12 or newer, on the machine where the MCP server runs. The server is launched with `npx`, which ships with Node. Check with `node -v`. If the command is missing or older, install the current LTS from [nodejs.org](https://nodejs.org) or a package manager:
-  - macOS: `brew install node`
-  - Linux: your distribution's packages ([NodeSource](https://github.com/nodesource/distributions) has current versions), or `nvm install --lts`
-  - Windows: `winget install OpenJS.NodeJS.LTS`
-
-  Restart your MCP client afterward so it picks up the new `PATH`. Cloud agents need Node in their own environment, not just on your laptop; see [Devin and other cloud agents](#devin-and-other-cloud-agents).
-- An InfraCodebase account. Enterprise accounts may sign in through Microsoft Entra; SaaS accounts use their normal InfraCodebase sign-in. During login, InfraCodebase guides you to connect a personal version-control account when your enterprise requires one.
+- [Node.js 20.12](https://nodejs.org) or later, on the machine where your agent runs.
+- macOS, Windows, or Linux.
+- An InfraCodebase account. Enterprise accounts may sign in through Microsoft Entra.
 
 ## Quickstart
 
@@ -55,17 +51,7 @@ On Windows, `npx` is a `.cmd` script that most clients can't start directly. Use
 
 ### Devin and other cloud agents
 
-Devin comes in two forms, and they connect differently:
-
-| | Devin Desktop | Devin in the cloud |
-| --- | --- | --- |
-| What it is | The local app, formerly Windsurf | Devin at app.devin.ai, on a Devin-managed machine |
-| Where the MCP server runs | Your computer | Devin's machine |
-| Node.js | Install on your computer | Add to Devin's organization blueprint |
-| Sign-in | Browser login, like other local clients | Personal access token in `INFRACODEBASE_TOKEN` |
-| Setup | `npx -y @infracodebase/mcp@latest init` and pick Devin Desktop (or `init --client devin`) | The steps below |
-
-The rest of this section covers Devin in the cloud and any other agent that runs on a remote machine.
+This section covers Devin in the cloud (app.devin.ai) and other agents that run on a remote machine. Devin Desktop runs on your computer, so set it up with `init` like any other client.
 
 Cloud agents run the MCP server on their own machine, not yours. `init` and `login` don't work there: browser sign-in sends you back to `127.0.0.1` on the computer whose browser you used, so it never reaches the agent's machine, and a login saved on your laptop isn't visible to it. Connect these agents with a personal access token instead.
 
