@@ -9,7 +9,6 @@ Give your AI coding agent access to [infracodebase](https://infracodebase.com) c
 ## Prerequisites
 
 - [Node.js 20.12](https://nodejs.org) or later, on the machine where your agent runs.
-- macOS, Windows, or Linux.
 - An InfraCodebase account. Enterprise accounts may sign in through Microsoft Entra.
 
 ## Quickstart
