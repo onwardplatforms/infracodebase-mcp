@@ -25,13 +25,13 @@ Signs you in through your browser and adds InfraCodebase to the MCP clients on y
 
 **1. Authenticate**, in one of two ways:
 
-- **Sign in with the CLI.** Opens your browser and saves a renewable session on this machine, so your client config stays free of secrets.
+- **CLI.** Opens your browser and saves a renewable session on this machine, so your client config stays free of secrets.
 
   ```bash
   npx -y @infracodebase/mcp@latest login
   ```
 
-- **Access token (legacy).** [Create a token](https://infracodebase.com/settings/tokens), then add it to the server's environment in step 2: `"env": { "INFRACODEBASE_TOKEN": "<your-token>" }` in a JSON config, or `--env INFRACODEBASE_TOKEN=<your-token>` before the `--` for Claude Code and Codex CLI. Use a token where browser sign-in can't reach the machine, such as Devin in the cloud and CI. Choose **Read and write** if the agent should set up repos or request exceptions.
+- **Personal Access Token.** [Create a token](https://infracodebase.com/settings/tokens), then add it to the server's environment in step 2: `"env": { "INFRACODEBASE_TOKEN": "<your-token>" }` in a JSON config, or `--env INFRACODEBASE_TOKEN=<your-token>` before the `--` for Claude Code and Codex CLI. Use a token where browser sign-in can't reach the machine, such as Devin in the cloud and CI. Choose **Read and write** if the agent should set up repos or request exceptions.
 
 **2. Add the server to your client.**
 
