@@ -23,6 +23,11 @@ import { getComplianceEvaluation } from "./get_compliance_evaluation.js";
 import { triggerComplianceEvaluation } from "./trigger_compliance_evaluation.js";
 import { listComplianceFindings } from "./list_compliance_findings.js";
 import { getComplianceEvalSpec } from "./get_compliance_eval_spec.js";
+import { listComplianceExceptions } from "./list_compliance_exceptions.js";
+import { submitComplianceExceptions } from "./submit_compliance_exceptions.js";
+import { approveComplianceException } from "./approve_compliance_exception.js";
+import { rejectComplianceException } from "./reject_compliance_exception.js";
+import { revokeComplianceException } from "./revoke_compliance_exception.js";
 import { listEnterpriseResources } from "./list_enterprise_resources.js";
 import { listModules } from "./list_modules.js";
 import { listVcsConnections } from "./list_vcs_connections.js";
@@ -47,6 +52,12 @@ export const TOOLS: ToolDef[] = [
   triggerComplianceEvaluation,
   listComplianceFindings,
   getComplianceEvalSpec,
+  // Compliance exceptions
+  listComplianceExceptions,
+  submitComplianceExceptions,
+  approveComplianceException,
+  rejectComplianceException,
+  revokeComplianceException,
   // Enterprise resources
   listEnterpriseResources,
   listModules,

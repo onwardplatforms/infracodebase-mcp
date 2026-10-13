@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { registerAllTools, TOOLS } from "./index.js";
 import { mockClient } from "../test-helpers.js";
+import { ApiError } from "../client.js";
 import type { ServerContext } from "../server.js";
 
 /**
@@ -89,6 +90,33 @@ describe("tool seam — failure handling", () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("403 forbidden");
+  });
+
+  it("surfaces an enterprise-token refusal on an exception decision as a readable error", async () => {
+    const { handlers } = await registerWith({
+      approveComplianceException: vi.fn().mockRejectedValue(
+        new ApiError(
+          403,
+          JSON.stringify({
+            type: "permission_error",
+            code: "user_context_required",
+            message:
+              "Compliance exception decisions are recorded under the name of the person who made them.",
+          }),
+          "/enterprises/ent_1/workspaces/ws_1/compliance/exceptions/r_1/approve"
+        )
+      ),
+    });
+
+    const result = await handlers.get("approve_compliance_exception")!({
+      workspace_id: "ws_1",
+      enterprise_id: "ent_1",
+      rule_id: "r_1",
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("recorded under the name of the person");
+    expect(result.content[0].text).toContain("user_context_required");
   });
 
   it("surfaces an unresolvable workspace as an isError result", async () => {

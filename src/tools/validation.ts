@@ -28,6 +28,8 @@ const COMPLIANCE_STATUSES = [
   "not_code_verifiable",
 ] as const;
 
+const EXCEPTION_TYPES = ["risk_acceptance", "not_applicable"] as const;
+
 const WORKSPACE_KINDS = ["STANDARD", "TEMPLATE", "MODULE"] as const;
 
 /**
@@ -176,6 +178,82 @@ export const TOOL_SHAPES = {
     ...enterpriseHint,
   },
 
+  list_compliance_exceptions: {
+    workspace_id: z.string().min(1).describe("Workspace ID."),
+    ...enterpriseHint,
+  },
+
+  submit_compliance_exceptions: {
+    workspace_id: z.string().min(1).describe("Workspace ID."),
+    exceptions: z
+      .array(
+        z.object({
+          rule_id: z.string().min(1).describe("Rule ID from list_compliance_findings."),
+          type: z
+            .enum(EXCEPTION_TYPES)
+            .describe(
+              "risk_acceptance: the rule is genuinely violated and the user accepts the risk. " +
+                "not_applicable: the rule doesn't apply at this level, e.g. a control set per " +
+                "subscription or tenant rather than in this code."
+            ),
+          justification: z
+            .string()
+            .min(1)
+            .max(2000)
+            .describe(
+              "Why this rule can't or shouldn't be fixed here. Reviewers read it, so name the " +
+                "specific constraint or design decision, not a generic reason."
+            ),
+          expires_in_days: z
+            .number()
+            .int()
+            .min(1)
+            .max(365) // the server's MAX_OVERRIDE_EXPIRY_DAYS
+            .describe("Days until it expires. Omit for an exception that never expires (the default).")
+            .optional(),
+        })
+      )
+      .min(1)
+      .describe("One entry per rule."),
+    grant: z
+      .boolean()
+      .describe(
+        "Leave unset to request review (the default, for every user). Set true only when the user " +
+          "has explicitly said to grant: the exceptions take effect immediately with no review, and " +
+          "it fails unless the user holds compliance approve permission."
+      )
+      .optional(),
+    evaluation_id: z
+      .string()
+      .min(1)
+      .describe("The evaluation the findings came from. Defaults to the latest on the default branch.")
+      .optional(),
+    ...enterpriseHint,
+  },
+
+  approve_compliance_exception: {
+    workspace_id: z.string().min(1).describe("Workspace ID."),
+    rule_id: z.string().min(1).describe("Rule ID of the open request."),
+    ...enterpriseHint,
+  },
+
+  reject_compliance_exception: {
+    workspace_id: z.string().min(1).describe("Workspace ID."),
+    rule_id: z.string().min(1).describe("Rule ID of the open request."),
+    reason: z
+      .string()
+      .min(1)
+      .max(2000)
+      .describe("Why the request is rejected. The requester sees this."),
+    ...enterpriseHint,
+  },
+
+  revoke_compliance_exception: {
+    workspace_id: z.string().min(1).describe("Workspace ID."),
+    rule_id: z.string().min(1).describe("Rule ID of the exception to end."),
+    ...enterpriseHint,
+  },
+
   get_compliance_eval_spec: {
     workspace_id: z.string().min(1).describe("Workspace ID."),
     ...enterpriseHint,
@@ -315,7 +393,17 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   trigger_compliance_evaluation:
     "Start a compliance evaluation of the code already pushed to the linked branch. The platform never sees your local tree: commit and push first, or the run scores stale code while the result looks valid. Pass ref as the branch name you pushed (e.g. 'main'); never omit it (that evaluates a possibly stale checkout) and never pass a bare SHA (it records no branch). Often no manual full run is needed: with CI compliance enabled, a push to the default branch or to a branch with an open pull request auto-runs a full evaluation. After pushing, call get_compliance_evaluation once; if a run for your commit already exists, trigger only a scoped re-check (rule_ids, rule_id, or ruleset_id) for the rules you fixed. Trigger a full run yourself only when no auto-run applies, at most once per task. If the server folds your scoped request into an already-running full run, the response has deduped: true with requested_scope and effective_scope; that is not an error. The call returns immediately with the queued run, a results `url`, and a `next` field telling you what to do: share the url with the user and stop. Never poll, sleep, or estimate how long it will take.",
   list_compliance_findings:
-    "Return the per-rule findings from a compliance evaluation. With no ref, uses the workspace's latest completed evaluation.",
+    "Return the per-rule findings from a compliance evaluation. With no ref, uses the workspace's latest completed evaluation. Each finding's `exception` gives the workspace's current exception on the rule, if any. Only `active` is in force: `stale` no longer applies, and `pending` is a request awaiting review.",
+  list_compliance_exceptions:
+    "List a workspace's compliance exceptions: active ones, stale ones (granted against rule text that has since changed, so no longer in force), and open requests waiting on an approver. Use it to see what's already covered before submitting, or, for an approver, to review what's waiting.",
+  submit_compliance_exceptions:
+    "Submit exceptions for failing rules the code can't or shouldn't fix. Only use this after remediation is exhausted and the user has agreed to the list you showed them. By default every user, approvers included, creates requests that a compliance approver reviews; nothing changes until one is approved. Set grant: true only when the user has explicitly said to grant rather than request. A grant takes effect immediately for the whole workspace with no review, and before sending it you must tell the user which rules will stop being enforced and for how long and get an explicit yes. Required rules can't carry an exception. Needs the user's own sign-in or personal access token; enterprise access tokens are refused.",
+  approve_compliance_exception:
+    "Approve an open exception request (compliance approvers only). Approval is final: the rule stops counting against the score on the whole workspace immediately, until revoked or expired. Call list_compliance_exceptions first, then tell the user which rule, the exception type, the justification, the expiry, and who requested it, say that it takes effect immediately, and get an explicit yes. Never approve on your own initiative.",
+  reject_compliance_exception:
+    "Reject an open exception request (compliance approvers only), with a reason the requester will see. Confirm with the user before calling.",
+  revoke_compliance_exception:
+    "End an exception that's in force (compliance approvers only). The rule counts against the score again immediately, which can fail the compliance check on open pull requests that still violate it. Confirm with the user before calling.",
   get_compliance_eval_spec:
     "Return the system prompt and conventions our CI compliance evaluator uses.",
   list_enterprise_resources:
@@ -372,6 +460,7 @@ export const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
   get_compliance_evaluation: readOnly("Get compliance evaluation"),
   list_compliance_findings: readOnly("List compliance findings"),
   get_compliance_eval_spec: readOnly("Get compliance evaluator spec"),
+  list_compliance_exceptions: readOnly("List compliance exceptions"),
   list_enterprise_resources: readOnly("List enterprise resources"),
   list_modules: readOnly("List approved modules"),
   list_vcs_connections: readOnly("List version-control connections"),
@@ -380,6 +469,24 @@ export const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
   // Creates records but never removes or replaces any.
   trigger_compliance_evaluation: writes("Trigger compliance evaluation", {
     destructive: false,
+    idempotent: false,
+  }),
+  // Requests change nothing live; a grant waives a rule.
+  submit_compliance_exceptions: writes("Submit compliance exceptions", {
+    destructive: true,
+    idempotent: false,
+  }),
+  // Waives a rule for the workspace.
+  approve_compliance_exception: writes("Approve compliance exception", {
+    destructive: true,
+    idempotent: false,
+  }),
+  reject_compliance_exception: writes("Reject compliance exception", {
+    destructive: false,
+    idempotent: false,
+  }),
+  revoke_compliance_exception: writes("Revoke compliance exception", {
+    destructive: true,
     idempotent: false,
   }),
   create_workspace: writes("Create workspace", { destructive: false, idempotent: false }),
