@@ -14,7 +14,7 @@
  *
  * Browser login is the default. Environment variables and flags are optional:
  *   INFRACODEBASE_API_URL  / --api-url=<url>     (optional; defaults to SaaS)
- *   INFRACODEBASE_TOKEN    / --token=<token>     (legacy non-interactive override)
+ *   INFRACODEBASE_TOKEN    / --token=<token>     (cloud agents and automation)
  */
 
 import { DEFAULT_API_URL, loadConfig, type ConfigOverrides } from "./config.js";

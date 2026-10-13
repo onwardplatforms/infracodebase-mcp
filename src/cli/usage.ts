@@ -29,7 +29,8 @@ Options:
   --no-open
         Print the sign-in URL instead of opening a browser (init and login).
   INFRACODEBASE_TOKEN / --token <token>
-        Legacy compatibility override for automation. Browser login is preferred.
+        Personal access token. Use it where browser login can't work: cloud
+        agents such as Devin, CI, and other machines without your browser.
 
 Docs: https://infracodebase.com/docs/developers/mcp`;
 }
