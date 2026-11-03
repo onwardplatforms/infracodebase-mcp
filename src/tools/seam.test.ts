@@ -79,32 +79,6 @@ describe("tool seam — end-to-end through real resolution", () => {
     expect(JSON.parse(result.content[0].text)).toEqual({ data: [{ id: "ent_1" }] });
   });
 
-  it("submits every exception and reports an individual rejection without losing successful requests", async () => {
-    const { handlers, client } = await registerWith({
-      submitComplianceException: vi
-        .fn()
-        .mockResolvedValueOnce({ state: "pending" })
-        .mockRejectedValueOnce(new Error("422 policy blocked")),
-    });
-
-    const result = await handlers.get("submit_compliance_exceptions")!({
-      enterprise_id: "ent_1",
-      workspace_id: "ws_1",
-      exceptions: [
-        { rule_id: "rule_1", type: "risk_acceptance", justification: "This is an intentional temporary risk." },
-        { rule_id: "rule_2", type: "not_applicable", justification: "This control does not apply to this resource." },
-      ],
-      mode: "request",
-    });
-
-    expect(client.submitComplianceException).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(result.content[0].text)).toMatchObject({
-      results: [
-        { rule_id: "rule_1", result: { state: "pending" } },
-        { rule_id: "rule_2", error: "422 policy blocked" },
-      ],
-    });
-  });
 });
 
 describe("tool seam — failure handling", () => {

@@ -106,6 +106,13 @@ export const TOOL_SHAPES = {
       )
       .optional(),
     iac_tool: iacTool,
+    branch: z
+      .string()
+      .min(1)
+      .describe(
+        "Branch to read rulesets and compliance state for. Omit to use the checked-out branch of a checkout of this repo."
+      )
+      .optional(),
   },
 
   get_ruleset_details: {
@@ -116,6 +123,11 @@ export const TOOL_SHAPES = {
 
   list_workspace_rulesets: {
     workspace_id: z.string().min(1).describe("Workspace ID."),
+    branch: z
+      .string()
+      .min(1)
+      .describe("Mark each ruleset with evaluation coverage from this branch's latest completed check.")
+      .optional(),
     ...enterpriseHint,
   },
 

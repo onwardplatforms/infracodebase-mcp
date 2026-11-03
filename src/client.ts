@@ -4,12 +4,13 @@
  * Calls the public /api/v1 endpoints with authentication.
  */
 
+import type { AccessTokenProvider } from "./oauth.js";
 import { VERSION } from "./version.js";
 
 export interface ClientConfig {
   baseUrl: string;
   token?: string;
-  getAccessToken?: () => Promise<string>;
+  getAccessToken?: AccessTokenProvider;
   authKind?: "oauth" | "legacy_token";
 }
 
@@ -23,7 +24,7 @@ export interface Identity {
 
 export class InfracodebaseClient {
   private baseUrl: string;
-  private getAccessToken: () => Promise<string>;
+  private getAccessToken: AccessTokenProvider;
   private authKind: "oauth" | "legacy_token";
 
   constructor(config: ClientConfig) {
@@ -48,18 +49,25 @@ export class InfracodebaseClient {
     }
   ): Promise<T> {
     const url = `${this.baseUrl}${path}`;
-    const token = await this.getAccessToken();
-    const headers: Record<string, string> = {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      "User-Agent": `@infracodebase/mcp/${VERSION}`,
-    };
+    const send = (token: string) =>
+      fetch(url, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "User-Agent": `@infracodebase/mcp/${VERSION}`,
+        },
+        body: options?.body ? JSON.stringify(options.body) : undefined,
+      });
 
-    const response = await fetch(url, {
-      method,
-      headers,
-      body: options?.body ? JSON.stringify(options.body) : undefined,
-    });
+    const token = await this.getAccessToken();
+    let response = await send(token);
+    // A login token can be refused before its saved expiry, for example when
+    // this computer's clock runs behind. Refresh once before surfacing an
+    // authentication failure; a personal access token is never retried.
+    if (response.status === 401 && this.authKind === "oauth") {
+      response = await send(await this.getAccessToken({ rejected: token }));
+    }
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -111,11 +119,14 @@ export class InfracodebaseClient {
     repoUrl?: string;
     workspaceId?: string;
     iacTool?: string;
+    /** Scope rulesets and the latest evaluation to this branch's last completed check. */
+    branch?: string;
   }) {
     const query = new URLSearchParams();
     if (params.repoUrl) query.set("repo_url", params.repoUrl);
     if (params.workspaceId) query.set("workspace_id", params.workspaceId);
     if (params.iacTool) query.set("iac_tool", params.iacTool);
+    if (params.branch) query.set("branch", params.branch);
     const qs = query.toString();
 
     return this.request<unknown>("GET", `/workspace-context${qs ? `?${qs}` : ""}`);
@@ -157,10 +168,11 @@ export class InfracodebaseClient {
    * active state). Use this to find a ruleset that exists in the enterprise
    * catalog but isn't currently active for this workspace.
    */
-  async listWorkspaceRulesets(enterpriseId: string, workspaceId: string) {
-    return this.request<{ data: Array<unknown> }>(
+  async listWorkspaceRulesets(enterpriseId: string, workspaceId: string, branch?: string) {
+    return this.request<{ data: Array<unknown>; branch?: unknown }>(
       "GET",
-      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/rulesets`
+      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/rulesets` +
+        (branch ? `?branch=${encodeURIComponent(branch)}` : "")
     );
   }
 
