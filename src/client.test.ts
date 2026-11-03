@@ -203,6 +203,55 @@ describe("InfracodebaseClient — query/path building", () => {
     expect(lastCall(fetchMock).url).toBe("https://api.example.com/workspace-context");
   });
 
+  it("returns undefined for a no-content decision instead of parsing an empty body", async () => {
+    const fetchMock = stubFetch(new Response(null, { status: 204 }));
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+
+    await expect(
+      client.approveComplianceException("ent_1", "ws_1", "rule_1")
+    ).resolves.toBeUndefined();
+    const { url, init } = lastCall(fetchMock);
+    expect(url).toBe(
+      "https://api.example.com/enterprises/ent_1/workspaces/ws_1/compliance/exceptions/rule_1/approve"
+    );
+    expect(init.method).toBe("POST");
+  });
+
+  it("sends exception submissions, rejections, and revocations to the exceptions resource", async () => {
+    const fetchMock = stubFetch(jsonResponse({}));
+    fetchMock.mockImplementation(async (_url, init: RequestInit) =>
+      init.method === "POST" && String(_url).endsWith("/exceptions")
+        ? jsonResponse({ state: "pending" }, 202)
+        : new Response(null, { status: 204 })
+    );
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+    const base = "https://api.example.com/enterprises/ent_1/workspaces/ws_1/compliance/exceptions";
+
+    await client.submitComplianceException("ent_1", "ws_1", {
+      rule_id: "rule_1",
+      type: "not_applicable",
+      justification: "Set per subscription.",
+    });
+    expect(lastCall(fetchMock).url).toBe(base);
+    expect(JSON.parse(lastCall(fetchMock).init.body as string)).toEqual({
+      rule_id: "rule_1",
+      type: "not_applicable",
+      justification: "Set per subscription.",
+    });
+
+    fetchMock.mockClear();
+    await client.rejectComplianceException("ent_1", "ws_1", "rule_1", "Fix it instead.");
+    expect(lastCall(fetchMock).url).toBe(`${base}/rule_1/reject`);
+    expect(JSON.parse(lastCall(fetchMock).init.body as string)).toEqual({
+      reason: "Fix it instead.",
+    });
+
+    fetchMock.mockClear();
+    await client.revokeComplianceException("ent_1", "ws_1", "rule_1");
+    expect(lastCall(fetchMock).url).toBe(`${base}/rule_1`);
+    expect(lastCall(fetchMock).init.method).toBe("DELETE");
+  });
+
   it("hits the /latest evaluation when no ref is given, else the ref path", async () => {
     const fetchMock = stubFetch(jsonResponse({}));
     fetchMock.mockImplementation(async () => jsonResponse({})); // fresh body per call
@@ -249,6 +298,42 @@ describe("InfracodebaseClient — query/path building", () => {
       ruleset_id: "rs_1",
       rule_ids: ["rule_1", "rule_2"],
     });
+  });
+
+  it("uses the exception endpoints and accepts their no-content decisions", async () => {
+    const fetchMock = stubFetch(jsonResponse({ data: [] }));
+    fetchMock.mockImplementationOnce(async () => jsonResponse({ data: [] }));
+    fetchMock.mockImplementationOnce(async () => jsonResponse({ state: "pending" }, 202));
+    fetchMock.mockImplementationOnce(async () => new Response(null, { status: 204 }));
+    fetchMock.mockImplementationOnce(async () => new Response(null, { status: 204 }));
+    fetchMock.mockImplementationOnce(async () => new Response(null, { status: 204 }));
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+
+    await client.listComplianceExceptions("ent_1", "ws_1");
+    await client.submitComplianceException("ent_1", "ws_1", {
+      rule_id: "rule_1",
+      type: "risk_acceptance",
+      justification: "The user explicitly accepted this temporary risk.",
+    });
+    await client.approveComplianceException("ent_1", "ws_1", "rule/1");
+    await client.rejectComplianceException("ent_1", "ws_1", "rule/1", "Needs a remediation plan.");
+    await client.revokeComplianceException("ent_1", "ws_1", "rule/1");
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "https://api.example.com/enterprises/ent_1/workspaces/ws_1/compliance/exceptions",
+      "https://api.example.com/enterprises/ent_1/workspaces/ws_1/compliance/exceptions",
+      "https://api.example.com/enterprises/ent_1/workspaces/ws_1/compliance/exceptions/rule%2F1/approve",
+      "https://api.example.com/enterprises/ent_1/workspaces/ws_1/compliance/exceptions/rule%2F1/reject",
+      "https://api.example.com/enterprises/ent_1/workspaces/ws_1/compliance/exceptions/rule%2F1",
+    ]);
+    expect((fetchMock.mock.calls[1][1] as RequestInit).body).toBe(
+      JSON.stringify({
+        rule_id: "rule_1",
+        type: "risk_acceptance",
+        justification: "The user explicitly accepted this temporary risk.",
+      })
+    );
+    expect((fetchMock.mock.calls[4][1] as RequestInit).method).toBe("DELETE");
   });
 
   it("requests specific workspace kinds via a comma-separated query param", async () => {

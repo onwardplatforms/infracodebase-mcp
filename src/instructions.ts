@@ -11,13 +11,15 @@
  */
 export const SERVER_INSTRUCTIONS_BUDGET = 1800;
 
-export const SERVER_INSTRUCTIONS = `Before writing or changing any infrastructure-as-code (Terraform, Pulumi, CloudFormation, Bicep, Kubernetes, Helm, Ansible), including bootstrapping IaC in an empty repo, call get_workspace_context first, on every IaC turn. It says whether this repo is governed by infracodebase and which rulesets and coding guidelines apply. Compliance gates here are mandatory, not advisory: the job is to deliver the change and prove it complies, not to finish quickly.
+export const SERVER_INSTRUCTIONS = `Before writing or changing any infrastructure-as-code (Terraform, Pulumi, CloudFormation, Bicep, Kubernetes, Helm, Ansible), even in an empty repo, call get_workspace_context first, on every IaC turn. It says whether infracodebase governs this repo and which rulesets and coding guidelines apply. Compliance gates are mandatory, not advisory: deliver the change and prove it complies, rather than finishing quickly.
 
 Read the returned status:
-- linked: you hold the rulesets and guidelines. Write against them. They are scoped to a branch (auto-detected when the repo is): on a feature branch they come from its latest completed check, and \`coverage.rulesets_source: workspace_settings\` with automatic discovery means a full check will evaluate more rulesets than listed, so do not call the list complete.
-- unlinked: no rules are in force yet. Do not write IaC. Call plan_workspace_setup (read-only), ask the user the question in \`message\` using the plan's options, and call setup_workspace only after they answer. Then reload the context.
+- linked: write against the rulesets and guidelines. They are scoped to the detected branch: on a feature branch they come from its latest completed check, and \`coverage.rulesets_source: workspace_settings\` under automatic discovery means a full check evaluates more rulesets than listed, so never call it complete.
+- unlinked: no rules are in force yet. Do not write IaC. Call plan_workspace_setup (read-only), ask the user the question in \`message\` with the plan's options, call setup_workspace only after they answer, then reload the context.
 - no_access or ambiguous: follow \`message\`.
 
-Compliance evaluations run against code pushed to the linked branch, never your local tree. Commit and push first, pass \`ref\` as the branch name, and prefer scoped runs: a push to the default branch or to a branch with an open pull request already auto-runs a full evaluation. Trigger results carry a \`url\` and a \`next\` field. Share the url with the user and stop; never poll, sleep, or estimate how long a run will take.
+Evaluations run against pushed code, never your local tree. Commit and push first, pass \`ref\` as the branch name, and prefer scoped runs: a push to the default branch or a branch with an open pull request already runs a full evaluation. Trigger results carry a \`url\` and a \`next\` field: share the url and stop; never poll, sleep, or estimate run time.
 
-Always relay a \`warning\` or \`repository_error\` from create, link, or setup results: they mean pushes will not trigger compliance until the repo is re-linked.`;
+For failures the code can't or shouldn't fix, offer exceptions: show the user each rule's type and justification and call submit_compliance_exceptions only after they agree. It requests review by default; grant only when the user explicitly says grant.
+
+Always relay a \`warning\` or \`repository_error\` from create, link, or setup results: pushes will not trigger compliance until the repo is re-linked.`;
