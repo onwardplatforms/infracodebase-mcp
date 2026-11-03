@@ -33,11 +33,14 @@ const EXCEPTION_TYPES = ["risk_acceptance", "not_applicable"] as const;
 const WORKSPACE_KINDS = ["STANDARD", "TEMPLATE", "MODULE"] as const;
 
 /**
- * Longest description a client is known to show in full. Claude Code cuts tool
- * descriptions at 2,048 characters; the old trigger_compliance_evaluation text
- * was 2,996 and lost its whole "share the url, do not poll" block.
+ * Longest description a client is known to show in full. Claude Code cuts a
+ * tool description at 4,096 characters when the tool loads upfront, and at
+ * 16,384 when it loads through tool search (v2.1.296 and later; before that
+ * the cut was 2,048 for every tool, and the old trigger_compliance_evaluation
+ * text at 2,996 lost its whole "share the url, do not poll" block). Budget for
+ * the shorter limit, since a tool loads upfront whenever it is not deferred.
  */
-export const DESCRIPTION_BUDGET = 1900;
+export const DESCRIPTION_BUDGET = 3800;
 
 const idList = (desc: string) => z.array(z.string().min(1)).describe(desc).optional();
 

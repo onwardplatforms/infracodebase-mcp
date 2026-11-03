@@ -3,8 +3,9 @@ import { SERVER_INSTRUCTIONS, SERVER_INSTRUCTIONS_BUDGET } from "./instructions.
 
 describe("server instructions", () => {
   it("fits inside the budget clients actually display", () => {
-    // Claude Code showed ~1,850 chars of the old 9,850-char text. Anything past
-    // the budget is invisible to the model, so it must not carry protocol.
+    // Claude Code cuts server instructions at 4,096 characters (2,048 before
+    // v2.1.296). Anything past the cut is invisible to the model, so the text
+    // must fit, and protocol the agent must follow still rides in responses.
     expect(SERVER_INSTRUCTIONS.length).toBeLessThanOrEqual(SERVER_INSTRUCTIONS_BUDGET);
   });
 
