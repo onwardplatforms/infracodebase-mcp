@@ -15,7 +15,12 @@
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type {
+  CallToolResult,
+  ServerNotification,
+  ServerRequest,
+} from "@modelcontextprotocol/sdk/types.js";
+import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import { ApiError, WORKSPACE_PAGE_LIMIT, type InfracodebaseClient } from "../client.js";
 import type { ServerContext } from "../server.js";
 import {
@@ -30,6 +35,14 @@ import {
 import { TOOL_SHAPES, TOOL_DESCRIPTIONS, TOOL_ANNOTATIONS, type ToolName } from "./validation.js";
 
 export type Args = Record<string, any>;
+
+/**
+ * The per-request extras the SDK hands a tool handler: the client's abort
+ * signal, the request's `_meta` (a progressToken when the client wants
+ * progress), and `sendNotification` for progress updates. Optional, so a tool
+ * can be run from a test or from another tool without one.
+ */
+export type ToolExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 
 /** The fields we rely on from a workspace as the API sends it (a list row or a single GET). */
 export interface ApiWorkspace {
@@ -114,7 +127,7 @@ export interface ToolContext {
  */
 export interface ToolDef {
   name: ToolName;
-  run: (ctx: ToolContext, args: Args) => Promise<unknown>;
+  run: (ctx: ToolContext, args: Args, extra?: ToolExtra) => Promise<unknown>;
 }
 
 function asText(data: unknown): CallToolResult {
@@ -363,9 +376,9 @@ export function registerTool(server: McpServer, tool: ToolDef, ctx: ToolContext)
       inputSchema: TOOL_SHAPES[tool.name],
       annotations,
     },
-    async (args: Args) => {
+    async (args: Args, extra: ToolExtra) => {
       try {
-        return asText(await tool.run(ctx, args));
+        return asText(await tool.run(ctx, args, extra));
       } catch (err) {
         return asError(err);
       }

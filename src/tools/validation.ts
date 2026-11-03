@@ -220,6 +220,36 @@ export const TOOL_SHAPES = {
     ...enterpriseHint,
   },
 
+  wait_for_compliance_evaluation: {
+    workspace_id: z.string().min(1).describe("Workspace ID."),
+    ref: z
+      .string()
+      .min(1)
+      .describe(
+        "Evaluation id (from trigger_compliance_evaluation) or commit SHA to wait for. Omit to " +
+          "wait for the latest evaluation on the branch."
+      )
+      .optional(),
+    branch: z
+      .string()
+      .min(1)
+      .describe(
+        "With no ref, the branch whose latest evaluation to wait for. Omit to use the checked-out " +
+          "branch of a checkout of this workspace's repo."
+      )
+      .optional(),
+    max_wait_minutes: z
+      .number()
+      .int()
+      .min(1)
+      .max(25)
+      .describe(
+        "Longest to wait before returning the still-running evaluation. Default and maximum 25."
+      )
+      .optional(),
+    ...enterpriseHint,
+  },
+
   trigger_compliance_evaluation: {
     workspace_id: z.string().min(1).describe("Workspace ID."),
     ref: z
@@ -489,6 +519,8 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
     "List every ruleset relevant to a workspace — including enterprise rulesets that exist in the catalog but this workspace hasn't opted into. Each row has `effective_enabled` (is it actually active here) and `workspace_setting` (the workspace's stored opinion, null if it's never opted in/out). Use this when you notice code introducing a resource type or concern that isn't covered by any currently-active ruleset, to check whether a relevant one already exists but just isn't attached — then offer to attach it via update_workspace_resources rather than assuming none exists. Only enterprise rulesets that are enabled and not required can be attached this way; required ones are already active regardless. On a branch, `evaluated_on_branch` (from that branch's latest completed check) is what actually applied there; `effective_enabled` is only the workspace's settings. Under automatic discovery those differ, so answer 'which rulesets apply on this branch' from evaluated_on_branch and the response's `branch` block.",
   get_compliance_evaluation:
     "Return the summary of a compliance evaluation for this workspace. With no ref, returns the latest evaluation, scoped to branch if given. Call it once to check the current state; a still-running evaluation comes back with a `next` field, and you should never call this in a loop to wait for it. The response includes a `url` to the results page — share it with the user rather than only reporting the score inline. With no ref or branch, the checked-out branch of a checkout of this workspace's repo is used and reported as resolved_branch; private Work checks from conversations you have access to count, as on every branch-scoped read. A `found: false` names the branch and means no check is visible there, not that the workspace has no evaluations.",
+  wait_for_compliance_evaluation:
+    "Wait for a compliance evaluation to finish and return its result, in one call. Use it right after trigger_compliance_evaluation (pass the run's id as ref) when the user wants the outcome without having to ask again. The waiting happens inside this tool: it checks the server about every 20 seconds and sends progress notifications, so never poll, sleep, or loop around it yourself. In Claude Code a call that runs past two minutes moves to a background task and the result arrives as a task notification while the user keeps working; other clients may block on it, so only call this when the user wants to wait, and prefer sharing `url` when they do not. Returns the completed evaluation (score, result, counts, url) with a `next` field, or, if the run is still going when max_wait_minutes (25 at most) is reached, the running evaluation with `url` and a `next` saying to share it and stop. The run keeps going on the server either way.",
   trigger_compliance_evaluation:
     "Start a compliance evaluation of the code already pushed to the linked branch. The platform never sees your local tree: commit and push first, or the run scores stale code while the result looks valid. Pass ref as the branch name you pushed (e.g. 'main'); never omit it (that evaluates a possibly stale checkout) and never pass a bare SHA (it records no branch). Often no manual full run is needed: with CI compliance enabled, a push to the default branch or to a branch with an open pull request auto-runs a full evaluation. After pushing, call get_compliance_evaluation once; if a run for your commit already exists, trigger only a scoped re-check (rule_ids, rule_id, or ruleset_id) for the rules you fixed. Trigger a full run yourself only when no auto-run applies, at most once per task. If the server folds your scoped request into an already-running full run, the response has deduped: true with requested_scope and effective_scope; that is not an error. The call returns immediately with the queued run, a results `url`, and a `next` field telling you what to do: share the url with the user and stop. Never poll, sleep, or estimate how long it will take.",
   list_compliance_findings:
@@ -558,6 +590,7 @@ export const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
   get_ruleset_details: readOnly("Get ruleset details"),
   list_workspace_rulesets: readOnly("List workspace rulesets"),
   get_compliance_evaluation: readOnly("Get compliance evaluation"),
+  wait_for_compliance_evaluation: readOnly("Wait for compliance evaluation"),
   list_compliance_findings: readOnly("List compliance findings"),
   get_compliance_eval_spec: readOnly("Get compliance evaluator spec"),
   list_compliance_exceptions: readOnly("List compliance exceptions"),

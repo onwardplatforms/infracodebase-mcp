@@ -57,7 +57,7 @@ A few terms show up throughout the tools.
 
 ## Tools
 
-The server gives your agent 23 tools, grouped into seven areas. Your saved session is loaded and refreshed locally, so credentials never appear in tool arguments or MCP configuration. When in doubt, start with `get_workspace_context`. Called with no arguments it detects the repo from the client's workspace root or the directory the server was started in, and tells the agent everything it needs to know about that repo. Read-only tools are annotated as such, so clients that honor MCP annotations can run them without a permission prompt.
+The server gives your agent 24 tools, grouped into seven areas. Your saved session is loaded and refreshed locally, so credentials never appear in tool arguments or MCP configuration. When in doubt, start with `get_workspace_context`. Called with no arguments it detects the repo from the client's workspace root or the directory the server was started in, and tells the agent everything it needs to know about that repo. Read-only tools are annotated as such, so clients that honor MCP annotations can run them without a permission prompt.
 
 ### Workspace
 
@@ -82,6 +82,7 @@ The server gives your agent 23 tools, grouped into seven areas. Your saved sessi
 | `get_compliance_evaluation` | Get the result of a compliance run. Shows the latest by default. | `workspace_id`, `ref?`, `branch?` |
 | `trigger_compliance_evaluation` | Start a compliance run on the code you have already pushed to the linked branch. | `workspace_id`, `ref?`, `ruleset_id?`, `rule_id?`, `rule_ids?` |
 | `list_compliance_findings` | See the pass or fail result for each rule in a run. Returns up to `limit` findings (default 100) and says when more exist. `detail: summary` leaves out the evidence text. | `workspace_id`, `ref?`, `status?`, `ruleset_id?`, `limit?`, `detail?` |
+| `wait_for_compliance_evaluation` | Wait for a run to finish and return its result in one call. The waiting happens inside the tool, so the agent never polls. Capped at 25 minutes. | `workspace_id`, `ref?`, `branch?`, `max_wait_minutes?` |
 | `get_compliance_eval_spec` | See the exact instructions the compliance checker follows. | `workspace_id` |
 
 ### Compliance exceptions

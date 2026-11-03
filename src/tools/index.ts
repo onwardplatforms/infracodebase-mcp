@@ -21,6 +21,7 @@ import { getBuildRules } from "./get_build_rules.js";
 import { getRulesetDetails } from "./get_ruleset_details.js";
 import { listWorkspaceRulesets } from "./list_workspace_rulesets.js";
 import { getComplianceEvaluation } from "./get_compliance_evaluation.js";
+import { waitForComplianceEvaluation } from "./wait_for_compliance_evaluation.js";
 import { triggerComplianceEvaluation } from "./trigger_compliance_evaluation.js";
 import { listComplianceFindings } from "./list_compliance_findings.js";
 import { getComplianceEvalSpec } from "./get_compliance_eval_spec.js";
@@ -51,6 +52,7 @@ export const TOOLS: ToolDef[] = [
   listWorkspaceRulesets,
   // Compliance
   getComplianceEvaluation,
+  waitForComplianceEvaluation,
   triggerComplianceEvaluation,
   listComplianceFindings,
   getComplianceEvalSpec,
