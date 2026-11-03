@@ -22,6 +22,12 @@ export interface Identity {
   enterprises: Array<{ id?: string; name?: string; slug?: string }>;
 }
 
+/**
+ * The most workspaces one list call can return (the API's maximum page size).
+ * A page this full may be truncated, since the API has no cursor to continue.
+ */
+export const WORKSPACE_PAGE_LIMIT = 100;
+
 export class InfracodebaseClient {
   private baseUrl: string;
   private getAccessToken: AccessTokenProvider;
@@ -136,9 +142,19 @@ export class InfracodebaseClient {
     return this.request<{ data: Array<unknown> }>("GET", "/enterprises");
   }
 
-  async listWorkspaces(enterpriseId: string, kinds?: string[]) {
-    const query = new URLSearchParams({ limit: "100" });
+  /**
+   * One page of an enterprise's workspaces. The API has no cursor yet: it
+   * returns at most `limit` rows (WORKSPACE_PAGE_LIMIT at most) and says
+   * nothing about the rest, so a full page may be a truncated list.
+   */
+  async listWorkspaces(
+    enterpriseId: string,
+    kinds?: string[],
+    options?: { limit?: number; slug?: string }
+  ) {
+    const query = new URLSearchParams({ limit: String(options?.limit ?? WORKSPACE_PAGE_LIMIT) });
     if (kinds?.length) query.set("kinds", kinds.join(","));
+    if (options?.slug) query.set("slug", options.slug);
     return this.request<{ data: Array<unknown> }>(
       "GET",
       `/enterprises/${enterpriseId}/workspaces?${query}`
