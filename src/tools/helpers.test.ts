@@ -179,6 +179,25 @@ describe("createToolContext — getWorkspaceRepo", () => {
     await expect(strict.getWorkspaceRepo("ws_1", "ent_1")).rejects.toBe(denied);
   });
 
+  it("does not cache a workspace returned under a different enterprise", async () => {
+    const wrongRepo = { owner: "other", name: "infra" };
+    const ctx = serverContext({
+      getWorkspace: vi.fn().mockResolvedValue({
+        id: "ws_1",
+        enterprise: { id: "ent_other" },
+        linked_repository: wrongRepo,
+      }),
+      listEnterprises: vi.fn().mockResolvedValue({ data: [{ id: "ent_expected" }] }),
+      listWorkspaces: vi
+        .fn()
+        .mockResolvedValue({ data: [{ id: "ws_1", linked_repository: repo }] }),
+    });
+    const tools = createToolContext(ctx);
+
+    await expect(tools.getWorkspaceRepo("ws_1", "ent_expected")).resolves.toEqual(repo);
+    expect(ctx.client.getWorkspace).toHaveBeenCalledWith("ent_expected", "ws_1");
+  });
+
   it("remembers a workspace the scan did not list instead of rescanning on every call", async () => {
     const ctx = serverContext({
       listEnterprises: vi.fn().mockResolvedValue({ data: [{ id: "ent_1" }] }),

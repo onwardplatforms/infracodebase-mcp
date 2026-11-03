@@ -155,6 +155,16 @@ export function createToolContext(context: ServerContext): ToolContext {
           WorkspaceEntry,
           "enterprise_id"
         >;
+        // Defense in depth: a workspace response must remain scoped to the
+        // enterprise used in the request. Do not cache a repo returned for a
+        // different enterprise if an older server fails to enforce its path
+        // parameter.
+        const responseEnterpriseId = (w as { enterprise?: { id?: string } }).enterprise?.id;
+        if (responseEnterpriseId && responseEnterpriseId !== enterpriseId) {
+          await listAllWorkspaces();
+          if (!workspaceRepoMap.has(workspaceId)) workspaceRepoMap.set(workspaceId, null);
+          return workspaceRepoMap.get(workspaceId) ?? null;
+        }
         const repo = w.linked_repository ?? w.repo ?? null;
         workspaceRepoMap.set(workspaceId, repo);
         return repo;
