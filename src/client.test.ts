@@ -209,6 +209,51 @@ describe("InfracodebaseClient — query/path building", () => {
     expect(lastCall(fetchMock).url).toBe("https://api.example.com/workspace-context");
   });
 
+  it("builds /build-context with every selector, and sends an empty ruleset_ids to select none", async () => {
+    const fetchMock = stubFetch(jsonResponse({}));
+    fetchMock.mockImplementation(async () => jsonResponse({}));
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+
+    await client.getBuildContext({
+      repoUrl: "https://github.com/acme/infra",
+      enterpriseId: "ent_1",
+      rulesetIds: ["rs_a", "rs_b"],
+      iacTool: "terraform",
+      branch: "feature/x",
+    });
+    expect(lastCall(fetchMock).url).toBe(
+      "https://api.example.com/build-context?repo_url=https%3A%2F%2Fgithub.com%2Facme%2Finfra" +
+        "&enterprise_id=ent_1&ruleset_ids=rs_a%2Crs_b&iac_tool=terraform&branch=feature%2Fx"
+    );
+
+    // The API reads an empty ruleset_ids as "none selected", which is not the
+    // same as omitting it (that leaves selection_required open).
+    fetchMock.mockClear();
+    await client.getBuildContext({ rulesetIds: [] });
+    expect(lastCall(fetchMock).url).toBe("https://api.example.com/build-context?ruleset_ids=");
+
+    fetchMock.mockClear();
+    await client.getBuildContext({});
+    expect(lastCall(fetchMock).url).toBe("https://api.example.com/build-context");
+  });
+
+  it("builds /build-rules with the enterprise and the selected ruleset ids", async () => {
+    const fetchMock = stubFetch(jsonResponse({}));
+    fetchMock.mockImplementation(async () => jsonResponse({}));
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+
+    await client.getBuildRules("ent_1", ["rs_a"]);
+    expect(lastCall(fetchMock).url).toBe(
+      "https://api.example.com/build-rules?enterprise_id=ent_1&ruleset_ids=rs_a"
+    );
+
+    fetchMock.mockClear();
+    await client.getBuildRules("ent_1", []);
+    expect(lastCall(fetchMock).url).toBe(
+      "https://api.example.com/build-rules?enterprise_id=ent_1&ruleset_ids="
+    );
+  });
+
   it("returns undefined for a no-content decision instead of parsing an empty body", async () => {
     const fetchMock = stubFetch(new Response(null, { status: 204 }));
     const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });

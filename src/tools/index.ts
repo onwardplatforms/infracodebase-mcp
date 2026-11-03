@@ -17,6 +17,7 @@ import { createToolContext, registerTool, type ToolDef } from "./helpers.js";
 import { listEnterprises } from "./list_enterprises.js";
 import { listWorkspaces } from "./list_workspaces.js";
 import { getWorkspaceContext } from "./get_workspace_context.js";
+import { getBuildRules } from "./get_build_rules.js";
 import { getRulesetDetails } from "./get_ruleset_details.js";
 import { listWorkspaceRulesets } from "./list_workspace_rulesets.js";
 import { getComplianceEvaluation } from "./get_compliance_evaluation.js";
@@ -44,6 +45,7 @@ export const TOOLS: ToolDef[] = [
   listEnterprises,
   listWorkspaces,
   getWorkspaceContext,
+  getBuildRules,
   // Rulesets
   getRulesetDetails,
   listWorkspaceRulesets,

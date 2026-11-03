@@ -151,6 +151,30 @@ export const TOOL_SHAPES = {
           "this repo (reported as resolved_branch, or branch_detection says why none was used)."
       )
       .optional(),
+    enterprise_id: z
+      .string()
+      .min(1)
+      .describe(
+        "Optional. The enterprise to draft for when the repo is unlinked and you belong to several " +
+          "(after a needs_enterprise result), or the workspace's enterprise to skip a lookup."
+      )
+      .optional(),
+    ruleset_ids: idList(
+      "Unlinked repos only: the optional ruleset ids chosen from available_rulesets (an empty " +
+        "list selects none). Resolves selection_required without a separate get_build_rules call."
+    ),
+  },
+
+  get_build_rules: {
+    enterprise_id: z
+      .string()
+      .min(1)
+      .describe("The setup.enterprise_id from an unlinked get_workspace_context result."),
+    ruleset_ids: idList(
+      "Optional ruleset ids chosen from that result's available_rulesets. Omit or pass an empty " +
+        "list to select none; required rulesets are never listed here because they are already " +
+        "in the context."
+    ),
   },
 
   get_ruleset_details: {
@@ -456,7 +480,9 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   list_workspaces:
     "List workspaces you have access to in an enterprise. Each workspace includes its linked repo if any. Use this to find workspace IDs. Defaults to STANDARD-kind workspaces only — pass kinds to include template and/or module workspaces too. One call returns at most 100 rows and there is no cursor: when `truncated` is true the enterprise has more, so find a specific workspace with slug, or with get_workspace_context and its repo_url or workspace_id, rather than assuming it is missing.",
   get_workspace_context:
-    "Start here before writing or changing any IaC. Returns workspace identity, applicable rulesets, coding guidelines, latest compliance state, and a module catalog summary. Call it with no arguments to auto-detect the repo from the client's workspace root or the server's working directory (the result then carries resolved_repo_url and resolved_from), or pass repo_url (the git remote) or workspace_id. `status` is one of: linked (context returned), unlinked (no workspace governs this repo, so no rules are in force: do not write IaC yet; follow `message`, then call plan_workspace_setup), no_access (a workspace exists but you cannot see it; do not imply it is missing), or ambiguous (the repo matches workspaces in several enterprises; pick from `candidates` and call again with workspace_id). Every non-linked status includes a `message` saying what to do next. The rulesets and latest compliance state are scoped to a branch: explicit `branch`, else the checked-out branch of a checkout of this repo (reported as resolved_branch; branch_detection says why none was used and the default branch answered). On a feature branch they come from its latest completed check. Read `coverage.rulesets_source`: `workspace_settings` means no check is visible on the branch yet, and when `coverage.discovery` is automatic a full check will evaluate more rulesets than are listed, so never present the list as the complete set of rules that apply.",
+    "Start here before writing or changing any IaC. Returns workspace identity, applicable rulesets, coding guidelines, latest compliance state, and a module catalog summary. Call it with no arguments to auto-detect the repo from the client's workspace root or the server's working directory (the result then carries resolved_repo_url and resolved_from), or pass repo_url (the git remote) or workspace_id. `status` is one of: linked (context returned), unlinked (no workspace governs this repo, but the enterprise's drafting context is returned: when can_generate is true write against `rulesets` and `coding_guidelines` and offer plan_workspace_setup so pushes get checked; when selection_required is true follow `message` first), needs_enterprise (ask the user which of `enterprises` to draft for, then call again with enterprise_id), no_access (a workspace exists but you cannot see it; do not imply it is missing), or ambiguous (the repo matches workspaces in several enterprises; pick from `candidates` and call again with workspace_id). Every non-linked status includes a `message` saying what to do next. With no git remote at all (an empty repo) the enterprise context is still returned, with repo_detection saying why. The rulesets and latest compliance state are scoped to a branch: explicit `branch`, else the checked-out branch of a checkout of this repo (reported as resolved_branch; branch_detection says why none was used and the default branch answered). On a feature branch they come from its latest completed check. Read `coverage.rulesets_source`: `workspace_settings` means no check is visible on the branch yet, and when `coverage.discovery` is automatic a full check will evaluate more rulesets than are listed, so never present the list as the complete set of rules that apply.",
+  get_build_rules:
+    "Read the rules of optional rulesets you selected for an unlinked repo, without reloading the whole context. Use it when get_workspace_context came back unlinked with selection_required: pick the relevant entries from its available_rulesets (rule_titles summarize each), then call this with setup.enterprise_id and the chosen ruleset_ids (an empty list if none fit). Only the selected rulesets come back; the required ones are already in the context's `rulesets`. The response's `setup` carries the required plus selected ids to pass to setup_workspace once the repo is linked. Read-only; changes no workspace settings.",
   get_ruleset_details:
     "Load the full text of every rule in a single ruleset. Returns rule id, title, full content, required flag, enabled flag, and order. Includes disabled rules (enabled: false) so you can see the whole catalog, not just what's currently active — filter on `enabled` if you only want the rules actually being evaluated. Rule bodies are long: pass detail: 'summary' to get ids, titles, and flags without them.",
   list_workspace_rulesets:
@@ -528,6 +554,7 @@ export const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
   list_enterprises: readOnly("List enterprises"),
   list_workspaces: readOnly("List workspaces"),
   get_workspace_context: readOnly("Get workspace context"),
+  get_build_rules: readOnly("Get build rules"),
   get_ruleset_details: readOnly("Get ruleset details"),
   list_workspace_rulesets: readOnly("List workspace rulesets"),
   get_compliance_evaluation: readOnly("Get compliance evaluation"),
