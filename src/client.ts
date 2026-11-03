@@ -162,6 +162,45 @@ export class InfracodebaseClient {
     return this.request<unknown>("GET", `/workspace-context${qs ? `?${qs}` : ""}`);
   }
 
+  /**
+   * Drafting context that does not require a linked workspace. With a repo
+   * that no workspace governs (or with no selector at all) it answers with the
+   * enterprise's required rulesets, coding guidelines, and module catalog, plus
+   * `can_generate`, `selection_required`, and `available_rulesets` for the
+   * optional rulesets the agent may add. `rulesetIds` resolves that selection
+   * (an empty array selects none). Older self-hosted servers answer 404.
+   */
+  async getBuildContext(params: {
+    repoUrl?: string;
+    workspaceId?: string;
+    enterpriseId?: string;
+    rulesetIds?: string[];
+    iacTool?: string;
+    branch?: string;
+  }) {
+    const query = new URLSearchParams();
+    if (params.repoUrl) query.set("repo_url", params.repoUrl);
+    if (params.workspaceId) query.set("workspace_id", params.workspaceId);
+    if (params.enterpriseId) query.set("enterprise_id", params.enterpriseId);
+    if (params.rulesetIds) query.set("ruleset_ids", params.rulesetIds.join(","));
+    if (params.iacTool) query.set("iac_tool", params.iacTool);
+    if (params.branch) query.set("branch", params.branch);
+    const qs = query.toString();
+    return this.request<unknown>("GET", `/build-context${qs ? `?${qs}` : ""}`);
+  }
+
+  /**
+   * The rules of selected optional rulesets in an enterprise, without
+   * reloading the rest of the drafting context. Required rulesets are already
+   * in the build context, so only the selected ones come back, plus the
+   * `setup` ids (required and selected) to carry into setup_workspace.
+   */
+  async getBuildRules(enterpriseId: string, rulesetIds: string[]) {
+    const query = new URLSearchParams({ enterprise_id: enterpriseId });
+    query.set("ruleset_ids", rulesetIds.join(","));
+    return this.request<unknown>("GET", `/build-rules?${query.toString()}`);
+  }
+
   async listEnterprises() {
     return this.request<{ data: Array<unknown> }>("GET", "/enterprises");
   }

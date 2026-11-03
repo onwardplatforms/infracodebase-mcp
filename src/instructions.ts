@@ -20,8 +20,8 @@ Before writing or changing any IaC, call get_workspace_context first, on every I
 
 Read the returned status.
 - linked: write against the rulesets and guidelines. They are scoped to the detected branch. On a feature branch they come from its latest completed check, and \`coverage.rulesets_source: workspace_settings\` under automatic discovery means a full check evaluates more rulesets than listed, so never call the list complete.
-- unlinked: no rules are in force yet. Do not write IaC. Call plan_workspace_setup (read-only), ask the user the question in \`message\` with the plan's options, call setup_workspace only after they answer, then reload the context.
-- no_access or ambiguous: follow \`message\`.
+- unlinked: not governed yet, but drafting context is returned. If can_generate is true, write against its rulesets and guidelines, say pushes are unchecked, and offer plan_workspace_setup then setup_workspace once they answer. Otherwise follow \`message\` (it may ask for a ruleset selection via get_build_rules) before writing IaC.
+- needs_enterprise, no_access or ambiguous: follow \`message\`.
 
 Other entry points. list_modules finds approved modules before you write new infrastructure. list_compliance_findings shows per-rule results, and get_ruleset_details the full rule text. list_workspace_rulesets finds a relevant ruleset the workspace has not attached yet. A response that needs a follow-up carries a \`next\` or \`message\` field. Do what it says.
 

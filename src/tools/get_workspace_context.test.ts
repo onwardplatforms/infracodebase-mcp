@@ -1,9 +1,19 @@
 import { describe, it, expect, vi } from "vitest";
-import { getWorkspaceContext } from "./get_workspace_context.js";
+import {
+  DRAFT_MESSAGE,
+  NEEDS_ENTERPRISE_MESSAGE,
+  SELECTION_MESSAGE,
+  SETUP_OFFER,
+  getWorkspaceContext,
+} from "./get_workspace_context.js";
 import { mockClient, mockContext } from "../test-helpers.js";
 import { WrongEnterpriseError } from "./helpers.js";
+import { ApiError } from "../client.js";
 
 const NO_BRANCH = { branch_detection: "no_checkout", branch_note: expect.any(String) };
+
+/** What a self-hosted server without the build-context endpoint answers. */
+const NOT_FOUND = new ApiError(404, "", "/build-context", "https://api.example.com");
 
 describe("get_workspace_context", () => {
   it("resolves by workspace_id via a single client call, without touching repo detection", async () => {
@@ -58,7 +68,7 @@ describe("get_workspace_context", () => {
     expect(result).toEqual({ ...linkedResponse, ...NO_BRANCH });
   });
 
-  it.each(["unlinked", "no_access", "ambiguous"] as const)(
+  it.each(["no_access", "ambiguous"] as const)(
     "passes through a %s response verbatim, including its message field",
     async (status) => {
       const response = { status, owner: "owner", name: "name", message: `explanation for ${status}` };
@@ -71,12 +81,27 @@ describe("get_workspace_context", () => {
 
       // No workspace answered, so there is no branch to report on.
       expect(result).toEqual(response);
+      expect(client.getBuildContext).not.toHaveBeenCalled();
     }
   );
+
+  it("passes an unlinked response through unchanged when the server predates build-context", async () => {
+    const response = { status: "unlinked", owner: "owner", name: "name", message: "set it up" };
+    const client = mockClient({
+      resolveWorkspaceContext: vi.fn().mockResolvedValue(response),
+      getBuildContext: vi.fn().mockRejectedValue(NOT_FOUND),
+    });
+    const ctx = mockContext({ client });
+
+    const result = await getWorkspaceContext.run(ctx, { repo_url: "owner/name" });
+
+    expect(result).toEqual(response);
+  });
 
   it("auto-detects the repo when called with no arguments and says where it came from", async () => {
     const client = mockClient({
       resolveWorkspaceContext: vi.fn().mockResolvedValue({ status: "unlinked", owner: "acme", name: "infra" }),
+      getBuildContext: vi.fn().mockRejectedValue(NOT_FOUND),
     });
     const ctx = mockContext({
       client,
@@ -336,6 +361,255 @@ describe("get_workspace_context — branch report scope", () => {
       status: "linked",
       branch_detection: "unparsed_repo_url",
       branch_note: expect.stringContaining("git remote get-url origin"),
+    });
+  });
+});
+
+describe("get_workspace_context — drafting context for an unlinked repo", () => {
+  const UNLINKED = { status: "unlinked", owner: "acme", name: "infra", message: "set it up" };
+
+  /** A complete build-context answer: required rules in, optional ones chosen. */
+  const DRAFTING = {
+    status: "unlinked",
+    can_generate: true,
+    selection_required: false,
+    setup: { enterprise_id: "ent_1", ruleset_ids: ["rs_req"] },
+    context_scope: "enterprise",
+    enterprise: { id: "ent_1", name: "Acme" },
+    workspace: null,
+    coding_guidelines: { iac_tool: "terraform", content: "Use least privilege." },
+    rulesets: [{ id: "rs_req", title: "Security", required: true, rules: [] }],
+    available_rulesets: [],
+    modules: { status: "ok", entries: [], message: "none" },
+    compliance: { latest_evaluation: null },
+    message: "api drafting message",
+  };
+
+  it("merges the enterprise drafting context into an unlinked answer and says setup is an offer", async () => {
+    const client = mockClient({
+      resolveWorkspaceContext: vi.fn().mockResolvedValue(UNLINKED),
+      getBuildContext: vi.fn().mockResolvedValue(DRAFTING),
+    });
+    const ctx = mockContext({ client });
+
+    const result = await getWorkspaceContext.run(ctx, {
+      repo_url: "acme/infra",
+      iac_tool: "terraform",
+      enterprise_id: "ent_1",
+      ruleset_ids: ["rs_opt"],
+    });
+
+    expect(client.getBuildContext).toHaveBeenCalledWith({
+      repoUrl: "acme/infra",
+      enterpriseId: "ent_1",
+      rulesetIds: ["rs_opt"],
+      iacTool: "terraform",
+      branch: undefined,
+    });
+    expect(result).toEqual({
+      ...UNLINKED,
+      ...DRAFTING,
+      message: `${DRAFT_MESSAGE} ${SETUP_OFFER}`,
+    });
+  });
+
+  it("keeps the auto-detected repo and branch on the merged answer", async () => {
+    const client = mockClient({
+      resolveWorkspaceContext: vi.fn().mockResolvedValue(UNLINKED),
+      getBuildContext: vi.fn().mockResolvedValue(DRAFTING),
+    });
+    const ctx = mockContext({
+      client,
+      resolveRepoUrl: vi.fn(async () => ({
+        repo_url: "https://github.com/acme/infra",
+        resolved_from: "cwd" as const,
+        branch: "feature/x",
+      })),
+    });
+
+    const result = await getWorkspaceContext.run(ctx, {});
+
+    expect(client.getBuildContext).toHaveBeenCalledWith(
+      expect.objectContaining({ repoUrl: "https://github.com/acme/infra", branch: "feature/x" })
+    );
+    expect(result).toMatchObject({
+      status: "unlinked",
+      can_generate: true,
+      resolved_repo_url: "https://github.com/acme/infra",
+      resolved_from: "cwd",
+    });
+    // Nothing is linked, so there is no branch scope to report.
+    expect(result).not.toHaveProperty("branch_detection");
+  });
+
+  it("asks for a ruleset selection, naming this server's tool, when the API wants one", async () => {
+    const client = mockClient({
+      resolveWorkspaceContext: vi.fn().mockResolvedValue(UNLINKED),
+      getBuildContext: vi.fn().mockResolvedValue({
+        ...DRAFTING,
+        can_generate: false,
+        selection_required: true,
+        available_rulesets: [{ id: "rs_opt", title: "Tagging", rule_titles: ["Tag everything"] }],
+        message: "Call get_rules with ...",
+      }),
+    });
+
+    const result = await getWorkspaceContext.run(mockContext({ client }), { repo_url: "acme/infra" });
+
+    expect(result).toMatchObject({
+      status: "unlinked",
+      can_generate: false,
+      selection_required: true,
+      message: `${SELECTION_MESSAGE} ${SETUP_OFFER}`,
+    });
+    expect((result as { message: string }).message).not.toContain("get_rules ");
+  });
+
+  it("keeps the API's reason when drafting is blocked for another cause, like a module catalog outage", async () => {
+    const client = mockClient({
+      resolveWorkspaceContext: vi.fn().mockResolvedValue(UNLINKED),
+      getBuildContext: vi.fn().mockResolvedValue({
+        ...DRAFTING,
+        can_generate: false,
+        modules: { status: "unavailable", entries: [], message: "catalog down" },
+        message: "The module catalog could not be checked. Retry context lookup.",
+      }),
+    });
+
+    const result = await getWorkspaceContext.run(mockContext({ client }), { repo_url: "acme/infra" });
+
+    expect(result).toMatchObject({
+      can_generate: false,
+      message: `The module catalog could not be checked. Retry context lookup. ${SETUP_OFFER}`,
+    });
+  });
+
+  it("passes needs_enterprise through with the enterprises to choose from", async () => {
+    const enterprises = [
+      { id: "ent_1", name: "Acme" },
+      { id: "ent_2", name: "Globex" },
+    ];
+    const client = mockClient({
+      resolveWorkspaceContext: vi.fn().mockResolvedValue(UNLINKED),
+      getBuildContext: vi.fn().mockResolvedValue({
+        status: "needs_enterprise",
+        can_generate: false,
+        enterprises,
+        message: "Which enterprise are you building for? Call get_workspace_context with its enterprise_id.",
+      }),
+    });
+
+    const result = await getWorkspaceContext.run(mockContext({ client }), { repo_url: "acme/infra" });
+
+    expect(result).toEqual({
+      ...UNLINKED,
+      status: "needs_enterprise",
+      can_generate: false,
+      enterprises,
+      message: NEEDS_ENTERPRISE_MESSAGE,
+    });
+  });
+
+  it("keeps the unlinked answer, with can_generate false, when no enterprise is accessible", async () => {
+    const client = mockClient({
+      resolveWorkspaceContext: vi.fn().mockResolvedValue(UNLINKED),
+      getBuildContext: vi.fn().mockResolvedValue({
+        status: "no_access",
+        can_generate: false,
+        enterprises: [],
+        message: "No enterprise is accessible.",
+      }),
+    });
+
+    const result = await getWorkspaceContext.run(mockContext({ client }), { repo_url: "acme/infra" });
+
+    expect(result).toEqual({
+      ...UNLINKED,
+      can_generate: false,
+      message: "set it up No enterprise is accessible.",
+    });
+  });
+
+  it("lets a build-context failure other than 404 reach the agent, since it names the fix", async () => {
+    const forbidden = new ApiError(
+      403,
+      JSON.stringify({ message: "You do not have access to the selected enterprise." }),
+      "/build-context",
+      "https://api.example.com"
+    );
+    const client = mockClient({
+      resolveWorkspaceContext: vi.fn().mockResolvedValue(UNLINKED),
+      getBuildContext: vi.fn().mockRejectedValue(forbidden),
+    });
+
+    await expect(
+      getWorkspaceContext.run(mockContext({ client }), { repo_url: "acme/infra", enterprise_id: "ent_x" })
+    ).rejects.toBe(forbidden);
+  });
+
+  it("never consults build-context for a linked repo", async () => {
+    const client = mockClient({
+      resolveWorkspaceContext: vi.fn().mockResolvedValue({ status: "linked" }),
+    });
+
+    const result = await getWorkspaceContext.run(mockContext({ client }), { repo_url: "acme/infra" });
+
+    expect(client.getBuildContext).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ status: "linked" });
+  });
+
+  describe("with no git remote at all", () => {
+    it("answers with the enterprise context and says why no repo was resolved", async () => {
+      const client = mockClient({
+        resolveWorkspaceContext: vi.fn(),
+        getBuildContext: vi.fn().mockResolvedValue({ ...DRAFTING, repository: null }),
+      });
+      const ctx = mockContext({ client });
+
+      const result = await getWorkspaceContext.run(ctx, { iac_tool: "terraform", enterprise_id: "ent_1" });
+
+      expect(client.resolveWorkspaceContext).not.toHaveBeenCalled();
+      expect(client.getBuildContext).toHaveBeenCalledWith({
+        enterpriseId: "ent_1",
+        rulesetIds: undefined,
+        iacTool: "terraform",
+      });
+      expect(result).toEqual({
+        ...DRAFTING,
+        repository: null,
+        message: `${DRAFT_MESSAGE} ${SETUP_OFFER}`,
+        repo_detection: expect.stringContaining("Could not detect a git remote"),
+      });
+    });
+
+    it("asks which enterprise to draft for when the caller belongs to several", async () => {
+      const enterprises = [{ id: "ent_1" }, { id: "ent_2" }];
+      const client = mockClient({
+        getBuildContext: vi
+          .fn()
+          .mockResolvedValue({ status: "needs_enterprise", can_generate: false, enterprises, message: "?" }),
+      });
+
+      const result = await getWorkspaceContext.run(mockContext({ client }), {});
+
+      expect(result).toMatchObject({
+        status: "needs_enterprise",
+        enterprises,
+        message: NEEDS_ENTERPRISE_MESSAGE,
+        repo_detection: expect.any(String),
+      });
+    });
+
+    it("still surfaces the detector's error on a server without build-context", async () => {
+      const client = mockClient({
+        resolveWorkspaceContext: vi.fn(),
+        getBuildContext: vi.fn().mockRejectedValue(NOT_FOUND),
+      });
+
+      await expect(getWorkspaceContext.run(mockContext({ client }), {})).rejects.toThrow(
+        /Could not detect a git remote/
+      );
+      expect(client.resolveWorkspaceContext).not.toHaveBeenCalled();
     });
   });
 });

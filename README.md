@@ -65,7 +65,8 @@ The server gives your agent 23 tools, grouped into seven areas. Your saved sessi
 | --- | --- | --- |
 | `list_enterprises` | Find the enterprises you can access. | (none) |
 | `list_workspaces` | List the projects in an enterprise, and see which repo each one is linked to. One call returns at most 100; `truncated` says when there are more, and `slug` reaches one directly. | `enterprise_id`, `kinds?`, `slug?`, `limit?` |
-| `get_workspace_context` | The best place to start. Tells you whether a repo is governed, which rules apply, its coding guidelines, and its latest compliance result. Auto-detects the repo when called with no arguments. | `repo_url?` or `workspace_id?`, `iac_tool?` |
+| `get_workspace_context` | The best place to start. Tells you whether a repo is governed, which rules apply, its coding guidelines, and its latest compliance result. Auto-detects the repo when called with no arguments. For a repo no workspace governs yet, it still returns the enterprise's required rulesets, guidelines, and modules so the agent can draft against them. | `repo_url?` or `workspace_id?`, `iac_tool?`, `enterprise_id?`, `ruleset_ids?` |
+| `get_build_rules` | For an unlinked repo, read the rules of the optional rulesets the agent picked from `available_rulesets` without reloading the whole context. | `enterprise_id`, `ruleset_ids?` |
 
 ### Rulesets
 
@@ -104,7 +105,7 @@ For failing rules the code can't or shouldn't fix. An exception is either a **ri
 
 ### Setup
 
-The two-call path for a repo that comes back `unlinked`. The plan is read-only and lists the decisions that are yours; the apply step runs only after you confirm.
+The two-call path for a repo that comes back `unlinked`. Drafting does not wait on it, since the unlinked answer already carries the enterprise's rules, but pushes are not checked until the repo is linked. The plan is read-only and lists the decisions that are yours; the apply step runs only after you confirm.
 
 | Tool | What it does | Key inputs |
 | --- | --- | --- |
@@ -162,7 +163,8 @@ Browser login stores OAuth credentials in `~/.config/infracodebase/credentials.j
 
 - Missing or expired session. Run `npx -y @infracodebase/mcp@latest init` (or `login`). If a browser cannot open, add `--no-open` and open the printed URL yourself.
 - TLS errors against a self-hosted instance. If your instance uses a private certificate authority, set `NODE_EXTRA_CA_CERTS` to the path of your root certificate.
-- `get_workspace_context` returns `unlinked`. No workspace governs the repo yet, so no rulesets are in force. Ask the agent to set the repo up: `plan_workspace_setup` finds the right enterprise and connection, proposes a workspace and rulesets, and lists the decisions that are yours. Once you confirm, `setup_workspace` creates and links the workspace and reloads the rules before any IaC is written.
+- `get_workspace_context` returns `unlinked`. No workspace governs the repo yet, so pushes are not checked. The agent can still draft: the answer carries the enterprise's required rulesets, coding guidelines, and modules (`can_generate` says whether it is complete, and `selection_required` asks the agent to pick optional rulesets first). To get pushes checked, ask the agent to set the repo up: `plan_workspace_setup` finds the right enterprise and connection, proposes a workspace and rulesets, and lists the decisions that are yours. Once you confirm, `setup_workspace` creates and links the workspace and reloads the rules. On a self-hosted instance that predates drafting context, `unlinked` comes back without rules and the agent waits for setup, as before.
+- `get_workspace_context` returns `needs_enterprise`. You belong to several enterprises and the repo is not linked, so the agent asks which one to draft for and calls again with `enterprise_id`.
 
 ## CLI
 
