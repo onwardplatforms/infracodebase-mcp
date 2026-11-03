@@ -11,7 +11,7 @@
 
 import { vi } from "vitest";
 import type { InfracodebaseClient } from "./client.js";
-import type { ResolvedRepo } from "./repo-detect.js";
+import type { BranchDetection, ResolvedRepo } from "./repo-detect.js";
 import type { ToolContext, WorkspaceEntry } from "./tools/helpers.js";
 
 /**
@@ -43,6 +43,13 @@ export function mockContext(overrides: Partial<ToolContext> = {}): ToolContext {
       if (explicit) return { repo_url: explicit, resolved_from: "argument" };
       throw new Error("Could not detect a git remote (checked: /mock). Pass repo_url or workspace_id.");
     }),
+    resolveBranch: vi.fn(
+      async (explicit?: string): Promise<BranchDetection> =>
+        explicit
+          ? { branch: explicit, resolved_from: "argument" }
+          : { branch: null, reason: "no_checkout" }
+    ),
+    getWorkspaceRepo: vi.fn(async () => null),
     ...overrides,
   };
 }

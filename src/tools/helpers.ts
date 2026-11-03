@@ -18,7 +18,15 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { InfracodebaseClient } from "../client.js";
 import type { ServerContext } from "../server.js";
-import { createRepoResolver, gitRemoteUrl, type ResolvedRepo } from "../repo-detect.js";
+import {
+  createBranchResolver,
+  createRepoResolver,
+  gitBranchName,
+  gitRemoteUrl,
+  type BranchDetection,
+  type LinkedRepo,
+  type ResolvedRepo,
+} from "../repo-detect.js";
 import { TOOL_SHAPES, TOOL_DESCRIPTIONS, TOOL_ANNOTATIONS, type ToolName } from "./validation.js";
 
 export type Args = Record<string, any>;
@@ -27,7 +35,10 @@ export type Args = Record<string, any>;
 export interface WorkspaceEntry {
   id: string;
   enterprise_id: string;
-  repo?: { owner?: string; name?: string } | null;
+  /** The API's field for the linked repo. */
+  linked_repository?: LinkedRepo | null;
+  /** Older shape, kept so a stale server still resolves. */
+  repo?: LinkedRepo | null;
 }
 
 /**
@@ -47,6 +58,14 @@ export interface ToolContext {
    * it checked when none has a git remote.
    */
   resolveRepoUrl(explicit?: string): Promise<ResolvedRepo>;
+  /**
+   * The branch to read compliance state for: an explicit argument, else the
+   * checked-out branch of the client's workspace root or the server's working
+   * directory. Null when no branch can be detected.
+   */
+  resolveBranch(explicit?: string, options?: { repo?: LinkedRepo | null }): Promise<BranchDetection>;
+  /** The linked repo of a workspace the caller can see, or null when unknown. Cache-backed. */
+  getWorkspaceRepo(workspaceId: string): Promise<LinkedRepo | null>;
 }
 
 /**
@@ -90,14 +109,32 @@ export function createToolContext(context: ServerContext): ToolContext {
     const enterprises = (await client.listEnterprises()).data as Array<{ id: string }>;
     const perEnterprise = await Promise.all(
       enterprises.map(async (e) => {
-        const workspaces = (await client.listWorkspaces(e.id, ["STANDARD", "TEMPLATE", "MODULE"]))
-          .data as Array<Omit<WorkspaceEntry, "enterprise_id">>;
-        return workspaces.map((w) => ({ ...w, enterprise_id: e.id }));
+        // One enterprise that cannot be listed (expired plan, revoked access)
+        // must not hide every other enterprise's workspaces.
+        try {
+          const workspaces = (await client.listWorkspaces(e.id, ["STANDARD", "TEMPLATE", "MODULE"]))
+            .data as Array<Omit<WorkspaceEntry, "enterprise_id">>;
+          return workspaces.map((w) => ({ ...w, enterprise_id: e.id }));
+        } catch (err) {
+          console.error(
+            `[infracodebase-mcp] skipping enterprise ${e.id}: ${err instanceof Error ? err.message : String(err)}`
+          );
+          return [];
+        }
       })
     );
     const all = perEnterprise.flat();
     for (const w of all) workspaceEnterpriseMap.set(w.id, w.enterprise_id);
+    workspaceRepoMap.clear();
+    for (const w of all) workspaceRepoMap.set(w.id, w.linked_repository ?? w.repo ?? null);
     return all;
+  }
+
+  const workspaceRepoMap = new Map<string, LinkedRepo | null>();
+
+  async function getWorkspaceRepo(workspaceId: string) {
+    if (!workspaceRepoMap.has(workspaceId)) await listAllWorkspaces();
+    return workspaceRepoMap.get(workspaceId) ?? null;
   }
 
   /**
@@ -119,13 +156,23 @@ export function createToolContext(context: ServerContext): ToolContext {
     );
   }
 
-  const resolveRepoUrl = createRepoResolver({
+  const detection = {
     listRoots: context.listRoots ?? (async () => []),
     cwd: () => process.cwd(),
     gitRemote: gitRemoteUrl,
-  });
+    gitBranch: gitBranchName,
+  };
+  const resolveRepoUrl = createRepoResolver(detection);
+  const resolveBranch = createBranchResolver(detection);
 
-  return { client, listAllWorkspaces, getEnterpriseForWorkspace, resolveRepoUrl };
+  return {
+    client,
+    listAllWorkspaces,
+    getEnterpriseForWorkspace,
+    resolveRepoUrl,
+    resolveBranch,
+    getWorkspaceRepo,
+  };
 }
 
 /**

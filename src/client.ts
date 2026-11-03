@@ -116,11 +116,14 @@ export class InfracodebaseClient {
     repoUrl?: string;
     workspaceId?: string;
     iacTool?: string;
+    /** Scope rulesets and the latest evaluation to this branch's last completed check. */
+    branch?: string;
   }) {
     const query = new URLSearchParams();
     if (params.repoUrl) query.set("repo_url", params.repoUrl);
     if (params.workspaceId) query.set("workspace_id", params.workspaceId);
     if (params.iacTool) query.set("iac_tool", params.iacTool);
+    if (params.branch) query.set("branch", params.branch);
     const qs = query.toString();
 
     return this.request<unknown>("GET", `/workspace-context${qs ? `?${qs}` : ""}`);
@@ -161,11 +164,15 @@ export class InfracodebaseClient {
    * null if it's never opted in/out) and `effective_enabled` (the computed
    * active state). Use this to find a ruleset that exists in the enterprise
    * catalog but isn't currently active for this workspace.
+   *
+   * With `branch`, rows carry `evaluated_on_branch` from that branch's latest
+   * visible check and the response adds a `branch` block naming the evaluation.
    */
-  async listWorkspaceRulesets(enterpriseId: string, workspaceId: string) {
-    return this.request<{ data: Array<unknown> }>(
+  async listWorkspaceRulesets(enterpriseId: string, workspaceId: string, branch?: string) {
+    return this.request<{ data: Array<unknown>; branch?: unknown }>(
       "GET",
-      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/rulesets`
+      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/rulesets` +
+        (branch ? `?branch=${encodeURIComponent(branch)}` : "")
     );
   }
 

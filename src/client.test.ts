@@ -284,6 +284,23 @@ describe("InfracodebaseClient — query/path building", () => {
     );
   });
 
+  it("encodes the branch on the rulesets list and the workspace context", async () => {
+    const fetchMock = stubFetch(jsonResponse({ data: [] }));
+    fetchMock.mockImplementation(async () => jsonResponse({ data: [] }));
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+
+    await client.listWorkspaceRulesets("ent_1", "ws_1", "feature/x");
+    expect(lastCall(fetchMock).url).toBe(
+      "https://api.example.com/enterprises/ent_1/workspaces/ws_1/rulesets?branch=feature%2Fx"
+    );
+
+    fetchMock.mockClear();
+    await client.resolveWorkspaceContext({ workspaceId: "ws_1", branch: "feature/x" });
+    expect(lastCall(fetchMock).url).toBe(
+      "https://api.example.com/workspace-context?workspace_id=ws_1&branch=feature%2Fx"
+    );
+  });
+
   it("fetches findings under the ref evaluation, passing status as a query param", async () => {
     const fetchMock = stubFetch(jsonResponse({ findings: [] }));
     fetchMock.mockImplementation(async () => jsonResponse({ findings: [] })); // fresh body per call
