@@ -33,6 +33,21 @@ const EXCEPTION_TYPES = ["risk_acceptance", "not_applicable"] as const;
 
 const WORKSPACE_KINDS = ["STANDARD", "TEMPLATE", "MODULE"] as const;
 
+const DETAIL_LEVELS = ["full", "summary"] as const;
+
+/** Most findings list_compliance_findings returns unless `limit` says otherwise. */
+export const FINDINGS_DEFAULT_LIMIT = 100;
+export const FINDINGS_MAX_LIMIT = 1000;
+
+const detail = (omits: string) =>
+  z
+    .enum(DETAIL_LEVELS)
+    .describe(
+      `full (the default) returns every field. summary omits ${omits}, so a large response ` +
+        "fits in context; use it to survey, then ask for full on what matters."
+    )
+    .optional();
+
 /**
  * Longest description a client is known to show in full. Claude Code cuts a
  * tool description at 4,096 characters when the tool loads upfront, and at
@@ -141,6 +156,7 @@ export const TOOL_SHAPES = {
   get_ruleset_details: {
     workspace_id: z.string().min(1).describe("Workspace ID."),
     ruleset_id: z.string().min(1).describe("Ruleset ID, from get_workspace_context."),
+    detail: detail("each rule's content (the full markdown body)"),
     ...enterpriseHint,
   },
 
@@ -216,6 +232,18 @@ export const TOOL_SHAPES = {
       .enum(COMPLIANCE_STATUSES)
       .describe("Filter findings by their compliance status.")
       .optional(),
+    ruleset_id: z.string().min(1).describe("Only findings from this ruleset.").optional(),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(FINDINGS_MAX_LIMIT)
+      .describe(
+        `Most findings to return (default ${FINDINGS_DEFAULT_LIMIT}). When more exist the ` +
+          "response says so: narrow with status or ruleset_id, or raise this."
+      )
+      .optional(),
+    detail: detail("each finding's justification, evidence, and delta_justification"),
     ...enterpriseHint,
   },
 
@@ -430,7 +458,7 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   get_workspace_context:
     "Start here before writing or changing any IaC. Returns workspace identity, applicable rulesets, coding guidelines, latest compliance state, and a module catalog summary. Call it with no arguments to auto-detect the repo from the client's workspace root or the server's working directory (the result then carries resolved_repo_url and resolved_from), or pass repo_url (the git remote) or workspace_id. `status` is one of: linked (context returned), unlinked (no workspace governs this repo, so no rules are in force: do not write IaC yet; follow `message`, then call plan_workspace_setup), no_access (a workspace exists but you cannot see it; do not imply it is missing), or ambiguous (the repo matches workspaces in several enterprises; pick from `candidates` and call again with workspace_id). Every non-linked status includes a `message` saying what to do next. The rulesets and latest compliance state are scoped to a branch: explicit `branch`, else the checked-out branch of a checkout of this repo (reported as resolved_branch; branch_detection says why none was used and the default branch answered). On a feature branch they come from its latest completed check. Read `coverage.rulesets_source`: `workspace_settings` means no check is visible on the branch yet, and when `coverage.discovery` is automatic a full check will evaluate more rulesets than are listed, so never present the list as the complete set of rules that apply.",
   get_ruleset_details:
-    "Load the full text of every rule in a single ruleset. Returns rule id, title, full content, required flag, enabled flag, and order. Includes disabled rules (enabled: false) so you can see the whole catalog, not just what's currently active — filter on `enabled` if you only want the rules actually being evaluated.",
+    "Load the full text of every rule in a single ruleset. Returns rule id, title, full content, required flag, enabled flag, and order. Includes disabled rules (enabled: false) so you can see the whole catalog, not just what's currently active — filter on `enabled` if you only want the rules actually being evaluated. Rule bodies are long: pass detail: 'summary' to get ids, titles, and flags without them.",
   list_workspace_rulesets:
     "List every ruleset relevant to a workspace — including enterprise rulesets that exist in the catalog but this workspace hasn't opted into. Each row has `effective_enabled` (is it actually active here) and `workspace_setting` (the workspace's stored opinion, null if it's never opted in/out). Use this when you notice code introducing a resource type or concern that isn't covered by any currently-active ruleset, to check whether a relevant one already exists but just isn't attached — then offer to attach it via update_workspace_resources rather than assuming none exists. Only enterprise rulesets that are enabled and not required can be attached this way; required ones are already active regardless. On a branch, `evaluated_on_branch` (from that branch's latest completed check) is what actually applied there; `effective_enabled` is only the workspace's settings. Under automatic discovery those differ, so answer 'which rulesets apply on this branch' from evaluated_on_branch and the response's `branch` block.",
   get_compliance_evaluation:
@@ -438,7 +466,7 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   trigger_compliance_evaluation:
     "Start a compliance evaluation of the code already pushed to the linked branch. The platform never sees your local tree: commit and push first, or the run scores stale code while the result looks valid. Pass ref as the branch name you pushed (e.g. 'main'); never omit it (that evaluates a possibly stale checkout) and never pass a bare SHA (it records no branch). Often no manual full run is needed: with CI compliance enabled, a push to the default branch or to a branch with an open pull request auto-runs a full evaluation. After pushing, call get_compliance_evaluation once; if a run for your commit already exists, trigger only a scoped re-check (rule_ids, rule_id, or ruleset_id) for the rules you fixed. Trigger a full run yourself only when no auto-run applies, at most once per task. If the server folds your scoped request into an already-running full run, the response has deduped: true with requested_scope and effective_scope; that is not an error. The call returns immediately with the queued run, a results `url`, and a `next` field telling you what to do: share the url with the user and stop. Never poll, sleep, or estimate how long it will take.",
   list_compliance_findings:
-    "Return the per-rule findings from a compliance evaluation. With no ref, uses the workspace's latest completed evaluation. Each finding's `exception` gives the workspace's current exception on the rule, if any. Only `active` is in force: `stale` no longer applies, and `pending` is a request awaiting review.",
+    "Return the per-rule findings from a compliance evaluation. With no ref, uses the workspace's latest completed evaluation. Each finding's `exception` gives the workspace's current exception on the rule, if any. Only `active` is in force: `stale` no longer applies, and `pending` is a request awaiting review. Returns at most `limit` findings (default 100) and reports `findings_total` and `truncated` when more exist; narrow with status or ruleset_id. detail: 'summary' drops the long text fields for a quick survey.",
   list_compliance_exceptions:
     "List a workspace's compliance exceptions: active ones, stale ones (granted against rule text that has since changed, so no longer in force), and open requests waiting on an approver. Use it to see what's already covered before submitting, or, for an approver, to review what's waiting.",
   submit_compliance_exceptions:

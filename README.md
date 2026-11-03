@@ -72,7 +72,7 @@ The server gives your agent 23 tools, grouped into seven areas. Your saved sessi
 | Tool | What it does | Key inputs |
 | --- | --- | --- |
 | `list_workspace_rulesets` | See every ruleset that could apply to a workspace, including ones it has not turned on yet. | `workspace_id` |
-| `get_ruleset_details` | Read the full text of every rule in a ruleset, including the ones that are turned off. | `workspace_id`, `ruleset_id` |
+| `get_ruleset_details` | Read the full text of every rule in a ruleset, including the ones that are turned off. `detail: summary` leaves out the rule bodies. | `workspace_id`, `ruleset_id`, `detail?` |
 
 ### Compliance
 
@@ -80,7 +80,7 @@ The server gives your agent 23 tools, grouped into seven areas. Your saved sessi
 | --- | --- | --- |
 | `get_compliance_evaluation` | Get the result of a compliance run. Shows the latest by default. | `workspace_id`, `ref?`, `branch?` |
 | `trigger_compliance_evaluation` | Start a compliance run on the code you have already pushed to the linked branch. | `workspace_id`, `ref?`, `ruleset_id?`, `rule_id?`, `rule_ids?` |
-| `list_compliance_findings` | See the pass or fail result for each rule in a run. | `workspace_id`, `ref?`, `status?` |
+| `list_compliance_findings` | See the pass or fail result for each rule in a run. Returns up to `limit` findings (default 100) and says when more exist. `detail: summary` leaves out the evidence text. | `workspace_id`, `ref?`, `status?`, `ruleset_id?`, `limit?`, `detail?` |
 | `get_compliance_eval_spec` | See the exact instructions the compliance checker follows. | `workspace_id` |
 
 ### Compliance exceptions

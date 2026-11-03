@@ -275,17 +275,20 @@ export class InfracodebaseClient {
   async listComplianceFindings(
     enterpriseId: string,
     workspaceId: string,
-    params?: { ref?: string; status?: string }
+    params?: { ref?: string; status?: string; ruleset_id?: string }
   ) {
     // Findings are nested under an evaluation. A ref (evaluation id or commit
     // SHA) targets that evaluation; with no ref we hit the `latest` alias,
     // which the API resolves to the latest completed evaluation server-side —
     // one request either way, no client-side id resolution.
     const evalRef = params?.ref ? encodeURIComponent(params.ref) : "latest";
-    const query = params?.status ? `?status=${encodeURIComponent(params.status)}` : "";
+    const query = new URLSearchParams();
+    if (params?.status) query.set("status", params.status);
+    if (params?.ruleset_id) query.set("ruleset_id", params.ruleset_id);
+    const qs = query.toString();
     const path =
       `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/evaluations/${evalRef}/findings` +
-      query;
+      (qs ? `?${qs}` : "");
 
     return this.request<unknown>("GET", path);
   }
