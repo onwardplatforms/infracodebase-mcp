@@ -53,7 +53,8 @@ function finish(outcome: Outcome) {
 
 export const setupWorkspace: ToolDef = {
   name: "setup_workspace",
-  async run({ client }, a) {
+  async run(ctx, a) {
+    const { client } = ctx;
     const repository = { connection_id: a.connection_id, path: a.repo_path, branch: a.branch };
 
     if (a.existing_workspace_id) {
@@ -61,6 +62,7 @@ export const setupWorkspace: ToolDef = {
       const link = (await client.linkWorkspaceToRepo(a.enterprise_id, workspaceId, repository)) as {
         warning?: string;
       };
+      ctx.forgetWorkspaceRepo(workspaceId);
       const attached = a.ruleset_ids?.length
         ? await client.updateWorkspaceResources(a.enterprise_id, workspaceId, {
             add_ruleset_ids: a.ruleset_ids,

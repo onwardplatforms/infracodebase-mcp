@@ -149,3 +149,17 @@ describe("setup_workspace — link an existing workspace", () => {
     expect(result.warning).toBe("no webhook");
   });
 });
+
+describe("setup_workspace — cache", () => {
+  it("forgets the cached repo of the workspace it just linked", async () => {
+    const client = mockClient({
+      linkWorkspaceToRepo: vi.fn().mockResolvedValue({}),
+      resolveWorkspaceContext: vi.fn().mockResolvedValue({ status: "linked" }),
+    });
+    const ctx = mockContext({ client });
+
+    await setupWorkspace.run(ctx, { ...plan, existing_workspace_id: "ws_free" });
+
+    expect(ctx.forgetWorkspaceRepo).toHaveBeenCalledWith("ws_free");
+  });
+});

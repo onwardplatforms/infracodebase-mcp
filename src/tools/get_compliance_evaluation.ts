@@ -7,6 +7,18 @@ const IN_FLIGHT = new Set(["queued", "pending", "running", "in_progress"]);
 
 type EvaluationResult = Record<string, unknown> & { status?: string };
 
+/**
+ * The 404 that means "no evaluation", as opposed to a wrong workspace or
+ * enterprise (`workspace_not_found`). The body must be the API's JSON
+ * envelope: an HTML or plain-text 404 is a proxy page or a wrong API URL, and
+ * its message, which names the URL, must reach the user. An envelope without
+ * a code is accepted so a server that predates error codes still works.
+ */
+function isNoEvaluation(err: ApiError) {
+  if (!err.envelope) return false;
+  return err.code === undefined || err.code === "evaluation_not_found";
+}
+
 export const RUNNING_NEXT =
   "Still running. Share `url` with the user instead of polling; check again only when they ask.";
 
@@ -25,7 +37,12 @@ export const getComplianceEvaluation: ToolDef = {
   async run(ctx, a) {
     const enterpriseId = await ctx.getEnterpriseForWorkspace(a.workspace_id, a.enterprise_id);
     // A ref lookup is not branch-scoped, so never detect one for it.
-    const detected = a.ref ? null : await detectWorkspaceBranch(ctx, a.workspace_id, a.branch);
+    const detected = a.ref
+      ? null
+      : await detectWorkspaceBranch(ctx, a.workspace_id, {
+          branch: a.branch,
+          enterpriseId: a.enterprise_id,
+        });
     const report = detected ? branchReport(detected) : {};
     const branch = detected?.branch ?? undefined;
     let result: EvaluationResult;
@@ -39,8 +56,10 @@ export const getComplianceEvaluation: ToolDef = {
     } catch (err) {
       // The API answers "no evaluation" with a 404. On a branch that is a
       // normal state ("nothing checked here yet"), not an error, and the
-      // agent must not read it as "this workspace has no evaluations".
-      if (err instanceof ApiError && err.status === 404 && !a.ref && branch)
+      // agent must not read it as "this workspace has no evaluations". A 404
+      // with another code (workspace_not_found from a wrong enterprise hint)
+      // or without the JSON envelope is a real error.
+      if (err instanceof ApiError && err.status === 404 && isNoEvaluation(err) && !a.ref && branch)
         return {
           found: false,
           branch,

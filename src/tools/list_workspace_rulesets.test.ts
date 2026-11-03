@@ -92,3 +92,15 @@ describe("list_workspace_rulesets", () => {
     expect(result).toMatchObject({ data: [], branch_detection: "other_repo" });
   });
 });
+
+describe("list_workspace_rulesets — enterprise hint", () => {
+  it("hands the enterprise hint to the repo lookup", async () => {
+    const client = mockClient({ listWorkspaceRulesets: vi.fn().mockResolvedValue({ data: [] }) });
+    const getWorkspaceRepo = vi.fn(async () => null);
+    const ctx = mockContext({ client, getWorkspaceRepo });
+
+    await listWorkspaceRulesets.run(ctx, { workspace_id: "ws_1", enterprise_id: "ent_1" });
+
+    expect(getWorkspaceRepo).toHaveBeenCalledWith("ws_1", "ent_1");
+  });
+});

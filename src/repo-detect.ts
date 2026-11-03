@@ -36,10 +36,21 @@ export interface ResolvedBranch {
  * with a readable branch (also covers git missing or timing out, which the
  * stderr log distinguishes). `other_repo`: a checkout was found but its remote
  * is not the workspace's repo, so its branch would be the wrong one.
+ * `repo_unknown`: the workspace's repo is not known (none on record, the
+ * workspace was not found, or the lookup failed), so no checkout could be
+ * matched and none was trusted. `unparsed_repo_url`: the caller's repo_url is
+ * not a git remote this server can parse, so there was nothing to match on.
  */
+export type NoBranchReason = "no_checkout" | "other_repo" | "repo_unknown" | "unparsed_repo_url";
+
 export type BranchDetection =
   | ResolvedBranch
-  | { branch: null; reason: "no_checkout" | "other_repo" };
+  | {
+      branch: null;
+      reason: NoBranchReason;
+      /** What went wrong, for the agent-facing note, when the reason alone does not say. */
+      detail?: string;
+    };
 
 export interface RepoDetectDeps {
   /** file:// URIs (or absolute paths) the client advertises as workspace roots. */
@@ -71,15 +82,22 @@ function git(args: string[]): Promise<string | null> {
   });
 }
 
-/** `origin` first; otherwise the first remote the repo has. */
+/** The remote a checkout is identified by: `origin` when it has one, else the first `git remote` lists (alphabetical). */
+function pickRemote(remotes: string[]): string | null {
+  return remotes.includes("origin") ? "origin" : (remotes[0] ?? null);
+}
+
+/** The repo's remotes; null when `git remote` itself failed, which is not the same as having none. */
+async function listRemotes(dir: string): Promise<string[] | null> {
+  const out = await git(["-C", dir, "remote"]);
+  return out === null ? null : out.split("\n").map((r) => r.trim()).filter(Boolean);
+}
+
+/** The URL of the remote `pickRemote` chooses: `origin` first, else the first `git remote` lists. */
 export async function gitRemoteUrl(dir: string): Promise<string | null> {
   const origin = await git(["-C", dir, "remote", "get-url", "origin"]);
   if (origin) return origin;
-  const remotes = await git(["-C", dir, "remote"]);
-  const first = remotes
-    ?.split("\n")
-    .map((r) => r.trim())
-    .find(Boolean);
+  const first = pickRemote((await listRemotes(dir)) ?? []);
   return first ? git(["-C", dir, "remote", "get-url", first]) : null;
 }
 
@@ -149,9 +167,10 @@ export function remoteMatchesRepo(remote: string, repo: LinkedRepo | null | unde
 
 /**
  * The branch the server will know this checkout as: the upstream branch name
- * when one is set (a local `feature` tracking `origin/jo/feature` is
- * `jo/feature` to the platform), else the local name. Null on a detached HEAD
- * or outside a repo.
+ * when one is set on the remote `gitRemoteUrl` reads (a local `feature`
+ * tracking `origin/jo/feature` is `jo/feature` to the platform), else the
+ * local name. An upstream on another remote (a fork) names a branch of a
+ * different repo, so it is ignored. Null on a detached HEAD or outside a repo.
  */
 export async function gitBranchName(dir: string): Promise<string | null> {
   const upstream = await git([
@@ -164,7 +183,17 @@ export async function gitBranchName(dir: string): Promise<string | null> {
   ]);
   if (upstream && upstream !== "@{u}") {
     const slash = upstream.indexOf("/");
-    if (slash > 0) return upstream.slice(slash + 1);
+    if (slash > 0) {
+      const remote = upstream.slice(0, slash);
+      // `origin` is always the remote gitRemoteUrl reads when it exists, so
+      // only another remote needs the list to check it is the one in use.
+      if (remote === "origin") return upstream.slice(slash + 1);
+      const remotes = await listRemotes(dir);
+      // A branch with an upstream has at least one remote, so a failed list
+      // is a failure, not "no remotes". Do not guess a branch name from it.
+      if (remotes === null) return null;
+      if (pickRemote(remotes) === remote) return upstream.slice(slash + 1);
+    }
   }
   const name = await git(["-C", dir, "rev-parse", "--abbrev-ref", "HEAD"]);
   return name && name !== "HEAD" ? name : null;
@@ -239,18 +268,23 @@ export function createRepoResolver(deps: RepoDetectDeps) {
 /**
  * The branch the agent is working on, for tools that already know the
  * workspace. An explicit argument wins. Otherwise the first client root, then
- * the server's working directory, that is a git checkout with a branch; when
- * `repo` is given, only a checkout whose remote is that repo counts, so a
- * workspace is never asked about another project's branch. The result says
- * why no branch was used, so callers can report the fallback.
+ * the server's working directory, that is a git checkout with a branch. With
+ * `options`, only a checkout whose remote is `options.repo` counts, so a
+ * workspace is never asked about another project's branch; a null repo there
+ * means the repo is not known, and then no checkout is trusted at all
+ * (`repo_unknown`). Without `options` the first checkout wins. The result
+ * says why no branch was used, so callers can report the fallback.
  */
 export function createBranchResolver(deps: RepoDetectDeps) {
   return async function resolveBranch(
     explicit?: string,
-    options: { repo?: LinkedRepo | null } = {}
+    options?: { repo: LinkedRepo | null }
   ): Promise<BranchDetection> {
     if (explicit) return { branch: explicit, resolved_from: "argument" };
     if (!deps.gitBranch) return { branch: null, reason: "no_checkout" };
+    // A caller that meant to match a repo but has none to match must not be
+    // handed the first checkout's branch: it could belong to any project.
+    if (options && !options.repo) return { branch: null, reason: "repo_unknown" };
 
     const rootDirs = await listRootDirs(deps, (err) =>
       console.error(
@@ -263,7 +297,7 @@ export function createBranchResolver(deps: RepoDetectDeps) {
     ];
     let sawOtherRepo = false;
     for (const { dir, source } of candidates) {
-      if (options.repo) {
+      if (options) {
         const remote = await deps.gitRemote(dir);
         if (!remote) continue;
         if (!remoteMatchesRepo(remote, options.repo)) {

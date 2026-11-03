@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { getWorkspaceContext } from "./get_workspace_context.js";
 import { mockClient, mockContext } from "../test-helpers.js";
+import { WrongEnterpriseError } from "./helpers.js";
 
 const NO_BRANCH = { branch_detection: "no_checkout", branch_note: expect.any(String) };
 
@@ -68,7 +69,8 @@ describe("get_workspace_context", () => {
 
       const result = await getWorkspaceContext.run(ctx, { repo_url: "owner/name" });
 
-      expect(result).toEqual({ ...response, ...NO_BRANCH });
+      // No workspace answered, so there is no branch to report on.
+      expect(result).toEqual(response);
     }
   );
 
@@ -92,7 +94,6 @@ describe("get_workspace_context", () => {
       iacTool: undefined,
     });
     expect(result).toEqual({
-      ...NO_BRANCH,
       status: "unlinked",
       owner: "acme",
       name: "infra",
@@ -174,7 +175,7 @@ describe("get_workspace_context", () => {
 
     const result = await getWorkspaceContext.run(ctx, { workspace_id: "ws_1" });
 
-    expect(getWorkspaceRepo).toHaveBeenCalledWith("ws_1");
+    expect(getWorkspaceRepo.mock.calls[0][0]).toBe("ws_1");
     expect(resolveBranch).toHaveBeenCalledWith(undefined, { repo: { owner: "acme", name: "infra" } });
     expect(client.resolveWorkspaceContext).toHaveBeenCalledWith(
       expect.objectContaining({ workspaceId: "ws_1", branch: "feature/x" })
@@ -220,6 +221,121 @@ describe("get_workspace_context", () => {
       status: "linked",
       resolved_branch: "release/1",
       branch_resolved_from: "roots",
+    });
+  });
+});
+
+describe("get_workspace_context — branch report scope", () => {
+  it("hands the enterprise hint to the repo lookup so it stays a single request", async () => {
+    const client = mockClient({
+      resolveWorkspaceContext: vi.fn().mockResolvedValue({ status: "linked" }),
+    });
+    const getWorkspaceRepo = vi.fn(async () => ({ owner: "acme", name: "infra" }));
+    const ctx = mockContext({ client, getWorkspaceRepo });
+
+    await getWorkspaceContext.run(ctx, { workspace_id: "ws_1", enterprise_id: "ent_1" });
+
+    expect(getWorkspaceRepo).toHaveBeenCalledWith("ws_1", "ent_1");
+  });
+
+  it("never asks the repo lookup when the branch is given", async () => {
+    const client = mockClient({
+      resolveWorkspaceContext: vi.fn().mockResolvedValue({ status: "linked" }),
+    });
+    const getWorkspaceRepo = vi.fn(async () => null);
+    const ctx = mockContext({ client, getWorkspaceRepo });
+
+    await getWorkspaceContext.run(ctx, { workspace_id: "ws_1", branch: "main" });
+
+    expect(getWorkspaceRepo).not.toHaveBeenCalled();
+    expect(client.resolveWorkspaceContext).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: "ws_1", branch: "main" })
+    );
+  });
+
+  it("keeps branch fields off a no_access answer for a workspace_id", async () => {
+    const client = mockClient({
+      resolveWorkspaceContext: vi.fn().mockResolvedValue({ status: "no_access", message: "ask an admin" }),
+    });
+    const ctx = mockContext({
+      client,
+      resolveBranch: vi.fn(async () => ({ branch: null, reason: "other_repo" as const })),
+    });
+
+    const result = await getWorkspaceContext.run(ctx, { workspace_id: "ws_1" });
+
+    expect(result).toEqual({ status: "no_access", message: "ask an admin" });
+  });
+
+  it("says when the workspace's repo is unknown instead of trusting any checkout", async () => {
+    const client = mockClient({
+      resolveWorkspaceContext: vi.fn().mockResolvedValue({ status: "linked" }),
+    });
+    const ctx = mockContext({
+      client,
+      resolveBranch: vi.fn(async () => ({ branch: null, reason: "repo_unknown" as const })),
+    });
+
+    const result = await getWorkspaceContext.run(ctx, { workspace_id: "ws_1" });
+
+    expect(client.resolveWorkspaceContext).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: "ws_1", branch: undefined })
+    );
+    expect(result).toMatchObject({
+      status: "linked",
+      branch_detection: "repo_unknown",
+      branch_note: expect.stringContaining("Pass enterprise_id"),
+    });
+  });
+
+  it("degrades to repo_unknown with the cause when the repo lookup fails, and still answers", async () => {
+    const client = mockClient({
+      resolveWorkspaceContext: vi.fn().mockResolvedValue({ status: "linked" }),
+    });
+    const ctx = mockContext({
+      client,
+      getWorkspaceRepo: vi.fn().mockRejectedValue(new Error("API request failed: 429 /x")),
+    });
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await getWorkspaceContext.run(ctx, { workspace_id: "ws_1" });
+
+    expect(client.resolveWorkspaceContext).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: "ws_1", branch: undefined })
+    );
+    expect(result).toMatchObject({
+      status: "linked",
+      branch_detection: "repo_unknown",
+      branch_note: expect.stringContaining("Detection stopped on: API request failed: 429 /x"),
+    });
+    quiet.mockRestore();
+  });
+
+  it("lets a wrong enterprise_id fail the call with the fix, since its own request would 404 too", async () => {
+    const wrong = new WrongEnterpriseError("ws_1", "ent_wrong", "ent_1");
+    const client = mockClient({ resolveWorkspaceContext: vi.fn() });
+    const ctx = mockContext({ client, getWorkspaceRepo: vi.fn().mockRejectedValue(wrong) });
+
+    await expect(
+      getWorkspaceContext.run(ctx, { workspace_id: "ws_1", enterprise_id: "ent_wrong" })
+    ).rejects.toBe(wrong);
+    expect(client.resolveWorkspaceContext).not.toHaveBeenCalled();
+  });
+
+  it("says when an explicit repo_url cannot be parsed instead of claiming the workspace has no repo", async () => {
+    const client = mockClient({
+      resolveWorkspaceContext: vi.fn().mockResolvedValue({ status: "linked" }),
+    });
+    const resolveBranch = vi.fn();
+    const ctx = mockContext({ client, resolveBranch });
+
+    const result = await getWorkspaceContext.run(ctx, { repo_url: "not a remote" });
+
+    expect(resolveBranch).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      status: "linked",
+      branch_detection: "unparsed_repo_url",
+      branch_note: expect.stringContaining("git remote get-url origin"),
     });
   });
 });

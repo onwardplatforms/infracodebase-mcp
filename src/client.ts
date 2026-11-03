@@ -145,6 +145,11 @@ export class InfracodebaseClient {
     );
   }
 
+  /** One workspace: identity and linked repo. 404 when it is not in this enterprise; getWorkspaceRepo falls back to a scan on that. */
+  async getWorkspace(enterpriseId: string, workspaceId: string) {
+    return this.request<unknown>("GET", `/enterprises/${enterpriseId}/workspaces/${workspaceId}`);
+  }
+
   async createWorkspace(enterpriseId: string, body: unknown) {
     return this.request<unknown>("POST", `/enterprises/${enterpriseId}/workspaces`, {
       body,
@@ -494,7 +499,9 @@ export function formatApiError(
 }
 
 export class ApiError extends Error {
-  /** Stable machine-readable code from the API envelope, when the body was JSON. */
+  /** True when the body was the API's JSON envelope (a `message` string), as opposed to a proxy page or plain text. */
+  public envelope: boolean;
+  /** Stable machine-readable code from the envelope, when the body was one and it carried a code. */
   public code?: string;
   public requestId?: string;
 
@@ -508,6 +515,7 @@ export class ApiError extends Error {
     super(formatApiError(status, body, path, baseUrl, authKind));
     this.name = "ApiError";
     const parsed = parseErrorBody(body);
+    this.envelope = parsed !== null;
     this.code = parsed?.code;
     this.requestId = parsed?.request_id;
   }
