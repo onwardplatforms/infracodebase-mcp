@@ -13,7 +13,7 @@ export const listWorkspaceRulesets: ToolDef = {
   name: "list_workspace_rulesets",
   async run(ctx, a) {
     const enterpriseId = await ctx.getEnterpriseForWorkspace(a.workspace_id, a.enterprise_id);
-    const detected = await detectWorkspaceBranch(ctx, a.workspace_id, a.branch);
+    const detected = await detectWorkspaceBranch(ctx, a.workspace_id, a.branch, a.enterprise_id);
     const result = (await ctx.client.listWorkspaceRulesets(
       enterpriseId,
       a.workspace_id,

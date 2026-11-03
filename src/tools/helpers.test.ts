@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { createToolContext, registerTool, type ToolDef } from "./helpers.js";
 import { TOOL_ANNOTATIONS } from "./validation.js";
 import { mockClient } from "../test-helpers.js";
+import { ApiError } from "../client.js";
 import type { ServerContext } from "../server.js";
 
 function serverContext(clientMethods = {}): ServerContext {
@@ -35,12 +36,10 @@ describe("createToolContext — listAllWorkspaces", () => {
   it("skips an enterprise whose workspace list fails instead of failing every lookup", async () => {
     const ctx = serverContext({
       listEnterprises: vi.fn().mockResolvedValue({ data: [{ id: "ent_blocked" }, { id: "ent_2" }] }),
-      listWorkspaces: vi
-        .fn()
-        .mockRejectedValueOnce(new Error("402 payment_required"))
-        .mockResolvedValueOnce({
-          data: [{ id: "ws_2", linked_repository: { owner: "acme", name: "infra" } }],
-        }),
+      listWorkspaces: vi.fn(async (enterpriseId: string) => {
+        if (enterpriseId === "ent_blocked") throw new Error("402 payment_required");
+        return { data: [{ id: "ws_2", linked_repository: { owner: "acme", name: "infra" } }] };
+      }),
     });
     const tools = createToolContext(ctx);
     const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -52,6 +51,25 @@ describe("createToolContext — listAllWorkspaces", () => {
     expect(await tools.getWorkspaceRepo("ws_2")).toEqual({ owner: "acme", name: "infra" });
     expect(await tools.getWorkspaceRepo("ws_unknown")).toBeNull();
     expect(quiet).toHaveBeenCalledWith(expect.stringContaining("skipping enterprise ent_blocked"));
+    // The skipped enterprise is named when a workspace turns up nowhere, so a
+    // rate limit or outage there is not read as a bad workspace id.
+    await expect(tools.getEnterpriseForWorkspace("ws_unknown")).rejects.toThrow(
+      /could not be listed: ent_blocked \(402 payment_required\)/
+    );
+    quiet.mockRestore();
+  });
+
+  it("throws the listing error itself when every enterprise fails, instead of 'not found'", async () => {
+    const rateLimited = new ApiError(429, JSON.stringify({ code: "rate_limited" }), "/x");
+    const ctx = serverContext({
+      listEnterprises: vi.fn().mockResolvedValue({ data: [{ id: "ent_1" }, { id: "ent_2" }] }),
+      listWorkspaces: vi.fn().mockRejectedValue(rateLimited),
+    });
+    const tools = createToolContext(ctx);
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(tools.listAllWorkspaces()).rejects.toBe(rateLimited);
+    await expect(tools.getEnterpriseForWorkspace("ws_1")).rejects.toBe(rateLimited);
     quiet.mockRestore();
   });
 
@@ -110,6 +128,82 @@ describe("createToolContext — getEnterpriseForWorkspace", () => {
     await expect(tools.getEnterpriseForWorkspace("ws_missing")).rejects.toThrow(
       /not found in any accessible enterprise/
     );
+  });
+});
+
+describe("createToolContext — getWorkspaceRepo", () => {
+  const repo = { owner: "acme", name: "infra", host: "github.com", display_path: "acme/infra" };
+
+  it("fetches the one workspace when the enterprise is known, without a scan, and caches it", async () => {
+    const ctx = serverContext({
+      listEnterprises: vi.fn(),
+      getWorkspace: vi.fn().mockResolvedValue({ id: "ws_1", linked_repository: repo }),
+    });
+    const tools = createToolContext(ctx);
+
+    expect(await tools.getWorkspaceRepo("ws_1", "ent_hint")).toEqual(repo);
+    expect(await tools.getWorkspaceRepo("ws_1")).toEqual(repo);
+    expect(ctx.client.getWorkspace).toHaveBeenCalledTimes(1);
+    expect(ctx.client.getWorkspace).toHaveBeenCalledWith("ent_hint", "ws_1");
+    expect(ctx.client.listEnterprises).not.toHaveBeenCalled();
+  });
+
+  it("uses the warm enterprise map the same way as a hint", async () => {
+    const ctx = serverContext({
+      listEnterprises: vi.fn(),
+      getWorkspace: vi.fn().mockResolvedValue({ id: "ws_1", linked_repository: null }),
+    });
+    ctx.workspaceEnterpriseMap.set("ws_1", "ent_cached");
+    const tools = createToolContext(ctx);
+
+    expect(await tools.getWorkspaceRepo("ws_1")).toBeNull();
+    expect(ctx.client.getWorkspace).toHaveBeenCalledWith("ent_cached", "ws_1");
+    expect(ctx.client.listEnterprises).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a scan when the direct fetch 404s, and rethrows anything else", async () => {
+    const notFound = new ApiError(404, JSON.stringify({ code: "workspace_not_found" }), "/x");
+    const ctx = serverContext({
+      listEnterprises: vi.fn().mockResolvedValue({ data: [{ id: "ent_1" }] }),
+      listWorkspaces: vi.fn().mockResolvedValue({ data: [{ id: "ws_1", linked_repository: repo }] }),
+      getWorkspace: vi.fn().mockRejectedValue(notFound),
+    });
+    const tools = createToolContext(ctx);
+
+    expect(await tools.getWorkspaceRepo("ws_1", "ent_wrong")).toEqual(repo);
+
+    const denied = new ApiError(403, "forbidden", "/x");
+    const strict = createToolContext(
+      serverContext({ listEnterprises: vi.fn(), getWorkspace: vi.fn().mockRejectedValue(denied) })
+    );
+    await expect(strict.getWorkspaceRepo("ws_1", "ent_1")).rejects.toBe(denied);
+  });
+
+  it("remembers a workspace the scan did not list instead of rescanning on every call", async () => {
+    const ctx = serverContext({
+      listEnterprises: vi.fn().mockResolvedValue({ data: [{ id: "ent_1" }] }),
+      listWorkspaces: vi.fn().mockResolvedValue({ data: [] }),
+    });
+    const tools = createToolContext(ctx);
+
+    expect(await tools.getWorkspaceRepo("ws_far")).toBeNull();
+    expect(await tools.getWorkspaceRepo("ws_far")).toBeNull();
+    expect(ctx.client.listEnterprises).toHaveBeenCalledTimes(1);
+  });
+
+  it("refetches after forgetWorkspaceRepo, so a changed link is seen", async () => {
+    const other = { owner: "acme", name: "payments" };
+    const ctx = serverContext({
+      getWorkspace: vi
+        .fn()
+        .mockResolvedValueOnce({ id: "ws_1", linked_repository: repo })
+        .mockResolvedValueOnce({ id: "ws_1", linked_repository: other }),
+    });
+    const tools = createToolContext(ctx);
+
+    expect(await tools.getWorkspaceRepo("ws_1", "ent_1")).toEqual(repo);
+    tools.forgetWorkspaceRepo("ws_1");
+    expect(await tools.getWorkspaceRepo("ws_1", "ent_1")).toEqual(other);
   });
 });
 

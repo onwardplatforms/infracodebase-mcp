@@ -50,6 +50,7 @@ export function mockContext(overrides: Partial<ToolContext> = {}): ToolContext {
           : { branch: null, reason: "no_checkout" }
     ),
     getWorkspaceRepo: vi.fn(async () => null),
+    forgetWorkspaceRepo: vi.fn(),
     ...overrides,
   };
 }

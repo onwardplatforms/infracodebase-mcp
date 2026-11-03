@@ -36,10 +36,12 @@ export interface ResolvedBranch {
  * with a readable branch (also covers git missing or timing out, which the
  * stderr log distinguishes). `other_repo`: a checkout was found but its remote
  * is not the workspace's repo, so its branch would be the wrong one.
+ * `repo_unknown`: the workspace's repo is not known (none linked, or it could
+ * not be read), so no checkout could be matched and none was trusted.
  */
 export type BranchDetection =
   | ResolvedBranch
-  | { branch: null; reason: "no_checkout" | "other_repo" };
+  | { branch: null; reason: "no_checkout" | "other_repo" | "repo_unknown" };
 
 export interface RepoDetectDeps {
   /** file:// URIs (or absolute paths) the client advertises as workspace roots. */
@@ -71,15 +73,21 @@ function git(args: string[]): Promise<string | null> {
   });
 }
 
-/** `origin` first; otherwise the first remote the repo has. */
+/** The remote a checkout is identified by: `origin` when it has one, else its first remote. */
+function pickRemote(remotes: string[]): string | null {
+  return remotes.includes("origin") ? "origin" : (remotes[0] ?? null);
+}
+
+async function listRemotes(dir: string): Promise<string[]> {
+  const out = await git(["-C", dir, "remote"]);
+  return out ? out.split("\n").map((r) => r.trim()).filter(Boolean) : [];
+}
+
+/** The URL of the remote `pickRemote` chooses: `origin` first, else the first remote. */
 export async function gitRemoteUrl(dir: string): Promise<string | null> {
   const origin = await git(["-C", dir, "remote", "get-url", "origin"]);
   if (origin) return origin;
-  const remotes = await git(["-C", dir, "remote"]);
-  const first = remotes
-    ?.split("\n")
-    .map((r) => r.trim())
-    .find(Boolean);
+  const first = pickRemote(await listRemotes(dir));
   return first ? git(["-C", dir, "remote", "get-url", first]) : null;
 }
 
@@ -149,9 +157,10 @@ export function remoteMatchesRepo(remote: string, repo: LinkedRepo | null | unde
 
 /**
  * The branch the server will know this checkout as: the upstream branch name
- * when one is set (a local `feature` tracking `origin/jo/feature` is
- * `jo/feature` to the platform), else the local name. Null on a detached HEAD
- * or outside a repo.
+ * when one is set on the remote `gitRemoteUrl` reads (a local `feature`
+ * tracking `origin/jo/feature` is `jo/feature` to the platform), else the
+ * local name. An upstream on another remote (a fork) names a branch of a
+ * different repo, so it is ignored. Null on a detached HEAD or outside a repo.
  */
 export async function gitBranchName(dir: string): Promise<string | null> {
   const upstream = await git([
@@ -164,7 +173,13 @@ export async function gitBranchName(dir: string): Promise<string | null> {
   ]);
   if (upstream && upstream !== "@{u}") {
     const slash = upstream.indexOf("/");
-    if (slash > 0) return upstream.slice(slash + 1);
+    if (slash > 0) {
+      const remote = upstream.slice(0, slash);
+      // `origin` is always the remote gitRemoteUrl reads when it exists, so
+      // only another remote needs the list to check it is the one in use.
+      if (remote === "origin" || pickRemote(await listRemotes(dir)) === remote)
+        return upstream.slice(slash + 1);
+    }
   }
   const name = await git(["-C", dir, "rev-parse", "--abbrev-ref", "HEAD"]);
   return name && name !== "HEAD" ? name : null;
@@ -251,6 +266,9 @@ export function createBranchResolver(deps: RepoDetectDeps) {
   ): Promise<BranchDetection> {
     if (explicit) return { branch: explicit, resolved_from: "argument" };
     if (!deps.gitBranch) return { branch: null, reason: "no_checkout" };
+    // A caller that meant to match a repo but has none to match must not be
+    // handed the first checkout's branch: it could belong to any project.
+    if ("repo" in options && !options.repo) return { branch: null, reason: "repo_unknown" };
 
     const rootDirs = await listRootDirs(deps, (err) =>
       console.error(

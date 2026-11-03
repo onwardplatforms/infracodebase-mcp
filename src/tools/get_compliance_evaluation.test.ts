@@ -158,6 +158,24 @@ describe("get_compliance_evaluation — in-flight runs", () => {
     expect((result as { message: string }).message).not.toContain("for this workspace");
   });
 
+  it("still throws a 404 that is about the workspace, not the evaluation", async () => {
+    // A wrong enterprise_id hint 404s too; that must not read as an empty branch.
+    const wrongWorkspace = new ApiError(
+      404,
+      JSON.stringify({ code: "workspace_not_found", message: "Workspace not found." }),
+      "/x"
+    );
+    const ctx = mockContext({
+      client: mockClient({ getComplianceEvaluation: vi.fn().mockRejectedValue(wrongWorkspace) }),
+      getEnterpriseForWorkspace: vi.fn().mockResolvedValue("ent_wrong"),
+      resolveBranch: vi.fn(async () => ({ branch: "feature/new", resolved_from: "cwd" as const })),
+    });
+
+    await expect(
+      getComplianceEvaluation.run(ctx, { workspace_id: "ws_1", enterprise_id: "ent_wrong" })
+    ).rejects.toBe(wrongWorkspace);
+  });
+
   it("still throws a 404 for a ref lookup and for other errors", async () => {
     const notFound = new ApiError(404, JSON.stringify({ code: "evaluation_not_found" }), "/x");
     const ctx = mockContext({

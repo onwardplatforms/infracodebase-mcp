@@ -1,7 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   createBranchResolver,
   createRepoResolver,
+  gitBranchName,
+  gitRemoteUrl,
   parseRemoteRef,
   remoteMatchesRepo,
 } from "./repo-detect.js";
@@ -177,6 +183,11 @@ describe("branch detection", () => {
     });
     // Without a repo to match, the first checkout wins as before.
     expect(await resolve()).toEqual({ branch: "feature/other", resolved_from: "roots" });
+    // Meaning to match a repo but not knowing it is not the same as not caring:
+    // the first checkout could belong to any project.
+    const probes = d.gitBranch.mock.calls.length;
+    expect(await resolve(undefined, { repo: null })).toEqual({ branch: null, reason: "repo_unknown" });
+    expect(d.gitBranch.mock.calls.length).toBe(probes);
   });
 
   it("parses remotes the way the platform stores them, keeping nested paths", () => {
@@ -224,5 +235,48 @@ describe("branch detection", () => {
     expect(remoteMatchesRepo("git@github.com:acme/infra.git", { owner: "acme", name: "other" })).toBe(false);
     expect(remoteMatchesRepo("git@github.com:acme/infra.git", null)).toBe(false);
     expect(remoteMatchesRepo("git@github.com:acme/infra.git", { owner: "acme" })).toBe(false);
+  });
+});
+
+describe("gitBranchName against a real checkout", () => {
+  /** A throwaway repo on branch `fix` with one commit, no remotes yet. */
+  function tempRepo() {
+    const dir = mkdtempSync(join(tmpdir(), "icb-branch-"));
+    const run = (...args: string[]) =>
+      execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", ...args], {
+        stdio: "pipe",
+      });
+    run("init", "-q", "-b", "fix");
+    run("commit", "-q", "--allow-empty", "-m", "init");
+    return { dir, run, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  }
+
+  it("reports the upstream name only when it is on the remote the repo is identified by", async () => {
+    const { dir, run, cleanup } = tempRepo();
+    try {
+      expect(await gitBranchName(dir)).toBe("fix");
+
+      run("remote", "add", "origin", "https://github.com/acme/infra.git");
+      run("update-ref", "refs/remotes/origin/jo/fix", "HEAD");
+      run("branch", "--set-upstream-to=origin/jo/fix");
+      expect(await gitRemoteUrl(dir)).toBe("https://github.com/acme/infra.git");
+      expect(await gitBranchName(dir)).toBe("jo/fix");
+
+      // A fork workflow: the branch tracks the fork, but the checkout is
+      // identified by origin, so the fork's branch name would be the wrong one.
+      run("remote", "add", "fork", "https://github.com/jo/infra.git");
+      run("update-ref", "refs/remotes/fork/jo-fix", "HEAD");
+      run("branch", "--set-upstream-to=fork/jo-fix");
+      expect(await gitRemoteUrl(dir)).toBe("https://github.com/acme/infra.git");
+      expect(await gitBranchName(dir)).toBe("fix");
+
+      // With no origin, the first remote identifies the checkout, and an
+      // upstream on it counts.
+      run("remote", "remove", "origin");
+      expect(await gitRemoteUrl(dir)).toBe("https://github.com/jo/infra.git");
+      expect(await gitBranchName(dir)).toBe("jo-fix");
+    } finally {
+      cleanup();
+    }
   });
 });

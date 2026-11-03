@@ -7,6 +7,11 @@ const IN_FLIGHT = new Set(["queued", "pending", "running", "in_progress"]);
 
 type EvaluationResult = Record<string, unknown> & { status?: string };
 
+/** The 404 that means "no evaluation", as opposed to a wrong workspace or enterprise. Older servers send no code. */
+function isNoEvaluation(err: ApiError) {
+  return err.code === undefined || err.code === "evaluation_not_found";
+}
+
 export const RUNNING_NEXT =
   "Still running. Share `url` with the user instead of polling; check again only when they ask.";
 
@@ -25,7 +30,9 @@ export const getComplianceEvaluation: ToolDef = {
   async run(ctx, a) {
     const enterpriseId = await ctx.getEnterpriseForWorkspace(a.workspace_id, a.enterprise_id);
     // A ref lookup is not branch-scoped, so never detect one for it.
-    const detected = a.ref ? null : await detectWorkspaceBranch(ctx, a.workspace_id, a.branch);
+    const detected = a.ref
+      ? null
+      : await detectWorkspaceBranch(ctx, a.workspace_id, a.branch, a.enterprise_id);
     const report = detected ? branchReport(detected) : {};
     const branch = detected?.branch ?? undefined;
     let result: EvaluationResult;
@@ -39,8 +46,9 @@ export const getComplianceEvaluation: ToolDef = {
     } catch (err) {
       // The API answers "no evaluation" with a 404. On a branch that is a
       // normal state ("nothing checked here yet"), not an error, and the
-      // agent must not read it as "this workspace has no evaluations".
-      if (err instanceof ApiError && err.status === 404 && !a.ref && branch)
+      // agent must not read it as "this workspace has no evaluations". Any
+      // other 404 (the workspace is not in this enterprise) is a real error.
+      if (err instanceof ApiError && err.status === 404 && isNoEvaluation(err) && !a.ref && branch)
         return {
           found: false,
           branch,

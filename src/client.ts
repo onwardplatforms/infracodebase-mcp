@@ -145,6 +145,11 @@ export class InfracodebaseClient {
     );
   }
 
+  /** One workspace: identity and linked repo. 404 when it is not in this enterprise or not visible. */
+  async getWorkspace(enterpriseId: string, workspaceId: string) {
+    return this.request<unknown>("GET", `/enterprises/${enterpriseId}/workspaces/${workspaceId}`);
+  }
+
   async createWorkspace(enterpriseId: string, body: unknown) {
     return this.request<unknown>("POST", `/enterprises/${enterpriseId}/workspaces`, {
       body,

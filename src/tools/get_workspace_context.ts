@@ -43,14 +43,14 @@ export const getWorkspaceContext: ToolDef = {
   name: "get_workspace_context",
   async run(ctx, a) {
     if (a.workspace_id) {
-      const detected = await detectWorkspaceBranch(ctx, a.workspace_id, a.branch);
+      const detected = await detectWorkspaceBranch(ctx, a.workspace_id, a.branch, a.enterprise_id);
       const result = await ctx.client.resolveWorkspaceContext({
         repoUrl: undefined,
         workspaceId: a.workspace_id,
         iacTool: a.iac_tool,
         branch: detected.branch ?? undefined,
       });
-      return { ...(result as Record<string, unknown>), ...branchReport(detected) };
+      return withBranch(result, detected);
     }
 
     const repo = await ctx.resolveRepoUrl(a.repo_url);
@@ -63,15 +63,27 @@ export const getWorkspaceContext: ToolDef = {
     });
     // Auto-detection is reported, never silent, so the agent and the user can
     // see which repo and branch the answer is about.
-    return {
-      ...(result as Record<string, unknown>),
-      ...(repo.resolved_from === "argument"
-        ? {}
-        : { resolved_repo_url: repo.repo_url, resolved_from: repo.resolved_from }),
-      ...branchReport(detected),
-    };
+    return withBranch(
+      {
+        ...(result as Record<string, unknown>),
+        ...(repo.resolved_from === "argument"
+          ? {}
+          : { resolved_repo_url: repo.repo_url, resolved_from: repo.resolved_from }),
+      },
+      detected
+    );
   },
 };
+
+/**
+ * Only a linked answer is scoped to a branch. The other statuses have no
+ * workspace to scope, and a note about "the workspace's default branch" there
+ * would send the agent chasing a branch instead of following `message`.
+ */
+function withBranch(result: unknown, detected: BranchDetection): Record<string, unknown> {
+  const r = result as Record<string, unknown>;
+  return r.status === "linked" ? { ...r, ...branchReport(detected) } : r;
+}
 
 /** The explicit repo_url as a LinkedRepo, so branch detection only accepts a checkout of that repo. */
 function repoFromUrl(repoUrl: string) {
