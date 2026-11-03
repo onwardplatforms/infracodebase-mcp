@@ -243,9 +243,11 @@ describe("gitBranchName against a real checkout", () => {
   function tempRepo() {
     const dir = mkdtempSync(join(tmpdir(), "icb-branch-"));
     const run = (...args: string[]) =>
-      execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", ...args], {
-        stdio: "pipe",
-      });
+      execFileSync(
+        "git",
+        ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args],
+        { stdio: "pipe" }
+      );
     run("init", "-q", "-b", "fix");
     run("commit", "-q", "--allow-empty", "-m", "init");
     return { dir, run, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
@@ -275,6 +277,13 @@ describe("gitBranchName against a real checkout", () => {
       run("remote", "remove", "origin");
       expect(await gitRemoteUrl(dir)).toBe("https://github.com/jo/infra.git");
       expect(await gitBranchName(dir)).toBe("jo-fix");
+
+      // "First" is the first `git remote` lists, alphabetically: a remote that
+      // sorts before the one the branch tracks takes over, and the upstream
+      // name is ignored again.
+      run("remote", "add", "aaa", "https://github.com/aaa/infra.git");
+      expect(await gitRemoteUrl(dir)).toBe("https://github.com/aaa/infra.git");
+      expect(await gitBranchName(dir)).toBe("fix");
     } finally {
       cleanup();
     }

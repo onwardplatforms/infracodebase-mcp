@@ -17,9 +17,14 @@ async function detectRepoBranch(
   repo: ResolvedRepo,
   explicit?: string
 ): Promise<BranchDetection> {
-  if (repo.resolved_from === "argument")
-    return ctx.resolveBranch(explicit, { repo: repoFromUrl(repo.repo_url) });
   if (explicit) return { branch: explicit, resolved_from: "argument" };
+  if (repo.resolved_from === "argument") {
+    const named = repoFromUrl(repo.repo_url);
+    // Nothing to match checkouts against: say so, rather than claiming the
+    // workspace has no repo or trusting the first checkout.
+    if (!named) return { branch: null, reason: "unparsed_repo_url" };
+    return ctx.resolveBranch(undefined, { repo: named });
+  }
   if (repo.branch) return { branch: repo.branch, resolved_from: repo.resolved_from };
   return { branch: null, reason: "no_checkout" };
 }
@@ -36,14 +41,18 @@ async function detectRepoBranch(
  * wider than the workspace's settings. An explicit `branch` wins. Otherwise
  * the checked-out branch is taken from a checkout of the same repo: the
  * directory the repo was auto-detected from, or, with workspace_id or
- * repo_url, a root or cwd whose remote is that repo. The result always says
- * which branch was used or why none was.
+ * repo_url, a root or cwd whose remote is that repo. A linked result says
+ * which branch was used or why none was; the other statuses have no
+ * workspace to scope and carry no branch fields.
  */
 export const getWorkspaceContext: ToolDef = {
   name: "get_workspace_context",
   async run(ctx, a) {
     if (a.workspace_id) {
-      const detected = await detectWorkspaceBranch(ctx, a.workspace_id, a.branch, a.enterprise_id);
+      const detected = await detectWorkspaceBranch(ctx, a.workspace_id, {
+        branch: a.branch,
+        enterpriseId: a.enterprise_id,
+      });
       const result = await ctx.client.resolveWorkspaceContext({
         repoUrl: undefined,
         workspaceId: a.workspace_id,

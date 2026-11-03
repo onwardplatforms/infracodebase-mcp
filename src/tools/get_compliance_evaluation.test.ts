@@ -158,6 +158,36 @@ describe("get_compliance_evaluation — in-flight runs", () => {
     expect((result as { message: string }).message).not.toContain("for this workspace");
   });
 
+  it("accepts a JSON 404 without a code as 'no evaluation', but not an HTML or text 404", async () => {
+    const branchCtx = (err: ApiError) =>
+      mockContext({
+        client: mockClient({ getComplianceEvaluation: vi.fn().mockRejectedValue(err) }),
+        getEnterpriseForWorkspace: vi.fn().mockResolvedValue("ent_1"),
+        resolveBranch: vi.fn(async () => ({ branch: "feature/new", resolved_from: "cwd" as const })),
+      });
+
+    // An older server's envelope: a message, no code.
+    const bare = new ApiError(404, JSON.stringify({ message: "No evaluation found." }), "/x");
+    expect(await getComplianceEvaluation.run(branchCtx(bare), { workspace_id: "ws_1" })).toMatchObject({
+      found: false,
+      branch: "feature/new",
+    });
+
+    // A proxy page or a wrong API URL: the error names the URL, and the user must see it.
+    const html = new ApiError(404, "<html><body>Not Found</body></html>", "/x", "https://wrong.example");
+    await expect(getComplianceEvaluation.run(branchCtx(html), { workspace_id: "ws_1" })).rejects.toBe(html);
+  });
+
+  it("hands the enterprise hint to the repo lookup", async () => {
+    const client = mockClient({ getComplianceEvaluation: vi.fn().mockResolvedValue({ score: 1 }) });
+    const getWorkspaceRepo = vi.fn(async () => null);
+    const ctx = mockContext({ client, getWorkspaceRepo });
+
+    await getComplianceEvaluation.run(ctx, { workspace_id: "ws_1", enterprise_id: "ent_1" });
+
+    expect(getWorkspaceRepo).toHaveBeenCalledWith("ws_1", "ent_1");
+  });
+
   it("still throws a 404 that is about the workspace, not the evaluation", async () => {
     // A wrong enterprise_id hint 404s too; that must not read as an empty branch.
     const wrongWorkspace = new ApiError(
