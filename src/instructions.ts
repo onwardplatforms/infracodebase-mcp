@@ -14,7 +14,7 @@ export const SERVER_INSTRUCTIONS_BUDGET = 1800;
 export const SERVER_INSTRUCTIONS = `Before writing or changing any infrastructure-as-code (Terraform, Pulumi, CloudFormation, Bicep, Kubernetes, Helm, Ansible), including bootstrapping IaC in an empty repo, call get_workspace_context first, on every IaC turn. It says whether this repo is governed by infracodebase and which rulesets and coding guidelines apply. Compliance gates here are mandatory, not advisory: the job is to deliver the change and prove it complies, not to finish quickly.
 
 Read the returned status:
-- linked: you hold the rulesets and guidelines. Write against them.
+- linked: you hold the rulesets and guidelines. Write against them. They are scoped to a branch (auto-detected when the repo is): on a feature branch they come from its latest completed check, and \`coverage.rulesets_source: workspace_settings\` with automatic discovery means a full check will evaluate more rulesets than listed, so do not call the list complete.
 - unlinked: no rules are in force yet. Do not write IaC. Call plan_workspace_setup (read-only), ask the user the question in \`message\` using the plan's options, and call setup_workspace only after they answer. Then reload the context.
 - no_access or ambiguous: follow \`message\`.
 

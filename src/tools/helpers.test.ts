@@ -32,6 +32,27 @@ describe("createToolContext — listAllWorkspaces", () => {
     expect(ctx.workspaceEnterpriseMap.get("ws_2")).toBe("ent_2");
   });
 
+  it("skips an enterprise whose workspace list fails instead of failing every lookup", async () => {
+    const ctx = serverContext({
+      listEnterprises: vi.fn().mockResolvedValue({ data: [{ id: "ent_blocked" }, { id: "ent_2" }] }),
+      listWorkspaces: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("402 payment_required"))
+        .mockResolvedValueOnce({ data: [{ id: "ws_2", repo: { owner: "acme", name: "infra" } }] }),
+    });
+    const tools = createToolContext(ctx);
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(await tools.listAllWorkspaces()).toEqual([
+      { id: "ws_2", enterprise_id: "ent_2", repo: { owner: "acme", name: "infra" } },
+    ]);
+    expect(await tools.getEnterpriseForWorkspace("ws_2")).toBe("ent_2");
+    expect(await tools.getWorkspaceRepo("ws_2")).toEqual({ owner: "acme", name: "infra" });
+    expect(await tools.getWorkspaceRepo("ws_unknown")).toBeNull();
+    expect(quiet).toHaveBeenCalledWith(expect.stringContaining("skipping enterprise ent_blocked"));
+    quiet.mockRestore();
+  });
+
   it("requests every workspace kind, not just the API's STANDARD-only default", async () => {
     // A TEMPLATE/MODULE workspace must still be discoverable here —
     // otherwise getEnterpriseForWorkspace's fallback scan (used when a tool

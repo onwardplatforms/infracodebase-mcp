@@ -104,6 +104,16 @@ export const TOOL_SHAPES = {
       )
       .optional(),
     iac_tool: iacTool,
+    branch: z
+      .string()
+      .min(1)
+      .describe(
+        "Branch to read rulesets and compliance state for. On a feature branch the answer is that " +
+          "branch's latest completed check, which under automatic discovery evaluates more rulesets " +
+          "than the workspace's settings list. Omit to use the checked-out branch of a checkout of " +
+          "this repo (reported as resolved_branch, or branch_detection says why none was used)."
+      )
+      .optional(),
   },
 
   get_ruleset_details: {
@@ -114,6 +124,15 @@ export const TOOL_SHAPES = {
 
   list_workspace_rulesets: {
     workspace_id: z.string().min(1).describe("Workspace ID."),
+    branch: z
+      .string()
+      .min(1)
+      .describe(
+        "Mark each ruleset with evaluated_on_branch from this branch's latest completed check. " +
+          "Omit to use the checked-out branch of a checkout of this workspace's repo (reported as " +
+          "resolved_branch, or branch_detection says why none was used)."
+      )
+      .optional(),
     ...enterpriseHint,
   },
 
@@ -128,8 +147,10 @@ export const TOOL_SHAPES = {
       .string()
       .min(1)
       .describe(
-        "Scope 'latest' to this branch (ignored if ref is given). Falls back to the " +
-          "workspace's default branch, then to the most recent completed evaluation on any branch. " +
+        "Scope 'latest' to this branch (ignored if ref is given). A branch with no completed " +
+          "check returns found: false; no other branch is substituted. Omit to use the checked-out " +
+          "branch of a checkout of this workspace's repo (reported as resolved_branch); only when " +
+          "none is detected does the server fall back to the default branch, then any branch. " +
           "Reflects the last evaluation of a PUSHED commit on this branch — it will not show local, " +
           "uncommitted, or unpushed changes."
       )
@@ -305,13 +326,13 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   list_workspaces:
     "List workspaces you have access to in an enterprise. Each workspace includes its linked repo if any. Use this to find workspace IDs. Defaults to STANDARD-kind workspaces only — pass kinds to include template and/or module workspaces too.",
   get_workspace_context:
-    "Start here before writing or changing any IaC. Returns workspace identity, applicable rulesets, coding guidelines, latest compliance state, and a module catalog summary. Call it with no arguments to auto-detect the repo from the client's workspace root or the server's working directory (the result then carries resolved_repo_url and resolved_from), or pass repo_url (the git remote) or workspace_id. `status` is one of: linked (context returned), unlinked (no workspace governs this repo, so no rules are in force: do not write IaC yet; follow `message`, then call plan_workspace_setup), no_access (a workspace exists but you cannot see it; do not imply it is missing), or ambiguous (the repo matches workspaces in several enterprises; pick from `candidates` and call again with workspace_id). Every non-linked status includes a `message` saying what to do next.",
+    "Start here before writing or changing any IaC. Returns workspace identity, applicable rulesets, coding guidelines, latest compliance state, and a module catalog summary. Call it with no arguments to auto-detect the repo from the client's workspace root or the server's working directory (the result then carries resolved_repo_url and resolved_from), or pass repo_url (the git remote) or workspace_id. `status` is one of: linked (context returned), unlinked (no workspace governs this repo, so no rules are in force: do not write IaC yet; follow `message`, then call plan_workspace_setup), no_access (a workspace exists but you cannot see it; do not imply it is missing), or ambiguous (the repo matches workspaces in several enterprises; pick from `candidates` and call again with workspace_id). Every non-linked status includes a `message` saying what to do next. The rulesets and latest compliance state are scoped to a branch: explicit `branch`, else the checked-out branch of a checkout of this repo (reported as resolved_branch; branch_detection says why none was used and the default branch answered). On a feature branch they come from its latest completed check. Read `coverage.rulesets_source`: `workspace_settings` means no check is visible on the branch yet, and when `coverage.discovery` is automatic a full check will evaluate more rulesets than are listed, so never present the list as the complete set of rules that apply.",
   get_ruleset_details:
     "Load the full text of every rule in a single ruleset. Returns rule id, title, full content, required flag, enabled flag, and order. Includes disabled rules (enabled: false) so you can see the whole catalog, not just what's currently active — filter on `enabled` if you only want the rules actually being evaluated.",
   list_workspace_rulesets:
-    "List every ruleset relevant to a workspace — including enterprise rulesets that exist in the catalog but this workspace hasn't opted into. Each row has `effective_enabled` (is it actually active here) and `workspace_setting` (the workspace's stored opinion, null if it's never opted in/out). Use this when you notice code introducing a resource type or concern that isn't covered by any currently-active ruleset, to check whether a relevant one already exists but just isn't attached — then offer to attach it via update_workspace_resources rather than assuming none exists. Only enterprise rulesets that are enabled and not required can be attached this way; required ones are already active regardless.",
+    "List every ruleset relevant to a workspace — including enterprise rulesets that exist in the catalog but this workspace hasn't opted into. Each row has `effective_enabled` (is it actually active here) and `workspace_setting` (the workspace's stored opinion, null if it's never opted in/out). Use this when you notice code introducing a resource type or concern that isn't covered by any currently-active ruleset, to check whether a relevant one already exists but just isn't attached — then offer to attach it via update_workspace_resources rather than assuming none exists. Only enterprise rulesets that are enabled and not required can be attached this way; required ones are already active regardless. On a branch, `evaluated_on_branch` (from that branch's latest completed check) is what actually applied there; `effective_enabled` is only the workspace's settings. Under automatic discovery those differ, so answer 'which rulesets apply on this branch' from evaluated_on_branch and the response's `branch` block.",
   get_compliance_evaluation:
-    "Return the summary of a compliance evaluation for this workspace. With no ref, returns the latest evaluation, scoped to branch if given. Call it once to check the current state; a still-running evaluation comes back with a `next` field, and you should never call this in a loop to wait for it. The response includes a `url` to the results page — share it with the user rather than only reporting the score inline.",
+    "Return the summary of a compliance evaluation for this workspace. With no ref, returns the latest evaluation, scoped to branch if given. Call it once to check the current state; a still-running evaluation comes back with a `next` field, and you should never call this in a loop to wait for it. The response includes a `url` to the results page — share it with the user rather than only reporting the score inline. With no ref or branch, the checked-out branch of a checkout of this workspace's repo is used and reported as resolved_branch; private Work checks from conversations you have access to count, as on every branch-scoped read. A `found: false` names the branch and means no check is visible there, not that the workspace has no evaluations.",
   trigger_compliance_evaluation:
     "Start a compliance evaluation of the code already pushed to the linked branch. The platform never sees your local tree: commit and push first, or the run scores stale code while the result looks valid. Pass ref as the branch name you pushed (e.g. 'main'); never omit it (that evaluates a possibly stale checkout) and never pass a bare SHA (it records no branch). Often no manual full run is needed: with CI compliance enabled, a push to the default branch or to a branch with an open pull request auto-runs a full evaluation. After pushing, call get_compliance_evaluation once; if a run for your commit already exists, trigger only a scoped re-check (rule_ids, rule_id, or ruleset_id) for the rules you fixed. Trigger a full run yourself only when no auto-run applies, at most once per task. If the server folds your scoped request into an already-running full run, the response has deduped: true with requested_scope and effective_scope; that is not an error. The call returns immediately with the queued run, a results `url`, and a `next` field telling you what to do: share the url with the user and stop. Never poll, sleep, or estimate how long it will take.",
   list_compliance_findings:

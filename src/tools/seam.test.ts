@@ -55,14 +55,16 @@ describe("tool seam — end-to-end through real resolution", () => {
     const result = await handlers.get("get_compliance_evaluation")!({ workspace_id: "ws_1" });
 
     // Resolution actually ran (no enterprise_id was supplied) and reached the API.
+    // The real resolver also reads the checked-out branch of this working
+    // directory, which is a branch name here and nothing on a detached CI HEAD.
     expect(client.getComplianceEvaluation).toHaveBeenCalledWith(
       "ent_1",
       "ws_1",
       undefined,
-      undefined
+      expect.toSatisfy((v: unknown) => v === undefined || typeof v === "string")
     );
     expect(result.isError).toBeUndefined();
-    expect(JSON.parse(result.content[0].text)).toEqual({ score: 100 });
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ score: 100 });
   });
 
   it("returns a JSON result for a tool that needs no resolution", async () => {
