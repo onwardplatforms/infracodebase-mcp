@@ -20,4 +20,4 @@ Read the returned status:
 
 Compliance evaluations run against code pushed to the linked branch, never your local tree. Commit and push first, pass \`ref\` as the branch name, and prefer scoped runs: a push to the default branch or to a branch with an open pull request already auto-runs a full evaluation. Trigger results carry a \`url\` and a \`next\` field. Share the url with the user and stop; never poll, sleep, or estimate how long a run will take.
 
-Always relay a \`warning\` or \`repository_error\` from create, link, or setup results: they mean pushes will not trigger compliance until the repo is re-linked.`;
+Always relay a \`warning\` or \`repository_error\` from create, link, or setup results: they mean pushes will not trigger compliance until the repo is re-linked. For intentional gaps, submit exceptions only after the user confirms them.`;

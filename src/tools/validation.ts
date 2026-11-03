@@ -29,6 +29,7 @@ const COMPLIANCE_STATUSES = [
 ] as const;
 
 const WORKSPACE_KINDS = ["STANDARD", "TEMPLATE", "MODULE"] as const;
+const EXCEPTION_TYPES = ["risk_acceptance", "not_applicable"] as const;
 
 /**
  * Longest description a client is known to show in full. Claude Code cuts tool
@@ -202,6 +203,60 @@ export const TOOL_SHAPES = {
     ...enterpriseHint,
   },
 
+  list_compliance_exceptions: {
+    workspace_id: z.string().min(1).describe("Workspace ID."),
+    ...enterpriseHint,
+  },
+
+  submit_compliance_exceptions: {
+    workspace_id: z.string().min(1).describe("Workspace ID."),
+    exceptions: z
+      .array(
+        z.object({
+          rule_id: z.string().min(1).describe("Rule ID from the compliance finding."),
+          type: z
+            .enum(EXCEPTION_TYPES)
+            .describe("risk_acceptance accepts an intentional violation; not_applicable excludes a rule that does not apply."),
+          justification: z.string().min(10).max(2000).describe("Why the exception is justified."),
+          expires_in_days: z
+            .number()
+            .int()
+            .min(1)
+            .max(3650)
+            .nullable()
+            .optional()
+            .describe("Optional expiry in days. Omit or set null for no expiry."),
+          evaluation_id: z.string().min(1).optional().describe("Optional evaluation ID that produced the finding."),
+        })
+      )
+      .min(1)
+      .describe("Exception requests to submit together."),
+    mode: z
+      .enum(["request", "grant"])
+      .default("request")
+      .describe("request is the default and requires approver review. Use grant only when the user explicitly asked to grant and has approval permission."),
+    ...enterpriseHint,
+  },
+
+  approve_compliance_exception: {
+    workspace_id: z.string().min(1).describe("Workspace ID."),
+    rule_id: z.string().min(1).describe("Rule ID for the pending request."),
+    ...enterpriseHint,
+  },
+
+  reject_compliance_exception: {
+    workspace_id: z.string().min(1).describe("Workspace ID."),
+    rule_id: z.string().min(1).describe("Rule ID for the pending request."),
+    reason: z.string().min(1).max(2000).describe("Reason the request was rejected."),
+    ...enterpriseHint,
+  },
+
+  revoke_compliance_exception: {
+    workspace_id: z.string().min(1).describe("Workspace ID."),
+    rule_id: z.string().min(1).describe("Rule ID for the active exception."),
+    ...enterpriseHint,
+  },
+
   list_enterprise_resources: {
     enterprise_id: z.string().min(1).describe("Enterprise ID."),
   },
@@ -339,6 +394,16 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
     "Return the per-rule findings from a compliance evaluation. With no ref, uses the workspace's latest completed evaluation.",
   get_compliance_eval_spec:
     "Return the system prompt and conventions our CI compliance evaluator uses.",
+  list_compliance_exceptions:
+    "List the workspace's active compliance exceptions and requests waiting for an approver.",
+  submit_compliance_exceptions:
+    "Submit one or more compliance exception requests after the user explicitly confirms each gap is intentional. Requests do not affect compliance until an approver accepts them. Use mode: 'grant' only when the user explicitly asks to grant the exceptions; it requires approval permission and takes effect immediately.",
+  approve_compliance_exception:
+    "Approve a pending compliance exception request. This takes effect immediately and requires compliance approval permission.",
+  reject_compliance_exception:
+    "Reject a pending compliance exception request with a reason. This requires compliance approval permission.",
+  revoke_compliance_exception:
+    "Revoke an active compliance exception so its rule is enforced again. This requires compliance approval permission.",
   list_enterprise_resources:
     "Return the rulesets, MCP servers, and workflows available in an enterprise. Each resource has a required flag.",
   list_modules:
@@ -393,6 +458,7 @@ export const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
   get_compliance_evaluation: readOnly("Get compliance evaluation"),
   list_compliance_findings: readOnly("List compliance findings"),
   get_compliance_eval_spec: readOnly("Get compliance evaluator spec"),
+  list_compliance_exceptions: readOnly("List compliance exceptions"),
   list_enterprise_resources: readOnly("List enterprise resources"),
   list_modules: readOnly("List approved modules"),
   list_vcs_connections: readOnly("List version-control connections"),
@@ -402,6 +468,22 @@ export const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
   trigger_compliance_evaluation: writes("Trigger compliance evaluation", {
     destructive: false,
     idempotent: false,
+  }),
+  submit_compliance_exceptions: writes("Submit compliance exceptions", {
+    destructive: false,
+    idempotent: false,
+  }),
+  approve_compliance_exception: writes("Approve compliance exception", {
+    destructive: false,
+    idempotent: false,
+  }),
+  reject_compliance_exception: writes("Reject compliance exception", {
+    destructive: false,
+    idempotent: false,
+  }),
+  revoke_compliance_exception: writes("Revoke compliance exception", {
+    destructive: true,
+    idempotent: true,
   }),
   create_workspace: writes("Create workspace", { destructive: false, idempotent: false }),
   setup_workspace: writes("Set up workspace", { destructive: false, idempotent: false }),

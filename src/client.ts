@@ -72,6 +72,11 @@ export class InfracodebaseClient {
       throw new ApiError(response.status, errorText, path, this.baseUrl, this.authKind);
     }
 
+    // Exception approval, rejection, and revocation deliberately return 204.
+    // Treat every no-content success uniformly so callers do not fail while
+    // parsing an otherwise successful mutation as JSON.
+    if (response.status === 204) return undefined as T;
+
     return (await response.json()) as T;
   }
 
@@ -246,6 +251,61 @@ export class InfracodebaseClient {
     return this.request<unknown>(
       "GET",
       `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/eval-spec`
+    );
+  }
+
+  /** List active compliance exceptions and pending exception requests. */
+  async listComplianceExceptions(enterpriseId: string, workspaceId: string) {
+    return this.request<unknown>(
+      "GET",
+      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/exceptions`
+    );
+  }
+
+  /** Request an exception, or directly grant one when the caller is an approver. */
+  async submitComplianceException(
+    enterpriseId: string,
+    workspaceId: string,
+    body: {
+      rule_id: string;
+      type: "risk_acceptance" | "not_applicable";
+      justification: string;
+      expires_in_days?: number | null;
+      evaluation_id?: string;
+      mode?: "request" | "grant";
+    }
+  ) {
+    return this.request<unknown>(
+      "POST",
+      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/exceptions`,
+      { body }
+    );
+  }
+
+  async approveComplianceException(enterpriseId: string, workspaceId: string, ruleId: string) {
+    return this.request<unknown>(
+      "POST",
+      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/exceptions/${encodeURIComponent(ruleId)}/approve`
+    );
+  }
+
+  async rejectComplianceException(
+    enterpriseId: string,
+    workspaceId: string,
+    ruleId: string,
+    reason: string
+  ) {
+    return this.request<unknown>(
+      "POST",
+      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/exceptions/${encodeURIComponent(ruleId)}/reject`,
+      { body: { reason } }
+    );
+  }
+
+  async revokeComplianceException(enterpriseId: string, workspaceId: string, ruleId: string) {
+    return this.request<unknown>(
+      "DELETE",
+      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/exceptions/${encodeURIComponent(ruleId)}`
     );
   }
 
