@@ -303,6 +303,14 @@ export function createToolContext(context: ServerContext): ToolContext {
   };
 }
 
+/** A copy of `row` without `fields`, for the summary detail level. Non-objects pass through. */
+export function omitFields(row: unknown, fields: readonly string[]): unknown {
+  if (!row || typeof row !== "object" || Array.isArray(row)) return row;
+  const copy = { ...(row as Record<string, unknown>) };
+  for (const field of fields) delete copy[field];
+  return copy;
+}
+
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
