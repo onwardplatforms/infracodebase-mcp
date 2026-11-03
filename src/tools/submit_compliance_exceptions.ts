@@ -16,13 +16,16 @@ export const FAILED_NEXT =
   "and can only be fixed, never excepted. rule_not_found means the rule_id isn't one this " +
   "workspace is evaluated against. exception_conflict means someone submitted on the same rule " +
   "at the same moment; retry that rule. exception_not_allowed means the finding's state rules " +
-  "it out.";
+  "it out, or, when evaluation_id was passed, that evaluation has no completed finding for the " +
+  "rule (it is still running, or a scoped run that skipped the rule): resubmit with the " +
+  "evaluation_id of a completed evaluation that covers it.";
 
 /**
  * Errors about the caller or the request as a whole, not the rule: they
  * would fail every remaining rule the same way, so the batch stops.
  */
 const CALLER_CODES = new Set([
+  "unauthorized",
   "user_context_required",
   "insufficient_scope",
   "cannot_manage_compliance",

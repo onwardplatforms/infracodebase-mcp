@@ -134,6 +134,23 @@ describe("submit_compliance_exceptions", () => {
     expect(result.next).toContain("not_attempted");
   });
 
+  it("stops on a 403 unauthorized (deactivated account) rather than retrying every rule", async () => {
+    const submit = vi
+      .fn()
+      .mockResolvedValueOnce(pending("lt_1"))
+      .mockRejectedValueOnce(apiError(403, "unauthorized"));
+    const ctx = ctxWith({ submitComplianceException: submit });
+
+    const result = (await submitComplianceExceptions.run(ctx, {
+      workspace_id: "ws_1",
+      exceptions: leftovers,
+    })) as Result;
+
+    expect(submit).toHaveBeenCalledTimes(2);
+    expect(result.stopped).toMatchObject({ code: "unauthorized" });
+    expect(result.not_attempted).toEqual(["im_7", "ns_1"]);
+  });
+
   it("keeps earlier rule failures when a caller-level error stops the batch", async () => {
     const submit = vi
       .fn()

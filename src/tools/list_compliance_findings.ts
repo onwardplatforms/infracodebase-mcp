@@ -10,8 +10,9 @@ export const UNCOVERED_NEXT = (n: number) =>
   "fix first. For any that are left, classify each as risk_acceptance (a real violation the user " +
   "accepts) or not_applicable (the rule doesn't apply at this level), write a justification " +
   "specific to it, show the user the list, and call submit_compliance_exceptions only after they " +
-  "agree. A stale exception was granted against older rule text and no longer applies, so it " +
-  "needs a new request.";
+  "agree, passing this response's evaluation_id so each exception is judged against the finding " +
+  "you are looking at rather than the default branch's latest. A stale exception was granted " +
+  "against older rule text and no longer applies, so it needs a new request.";
 
 /**
  * Per-rule findings from a compliance evaluation. When failures remain that

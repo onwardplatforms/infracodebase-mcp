@@ -167,6 +167,9 @@ export class InfracodebaseClient {
    * null if it's never opted in/out) and `effective_enabled` (the computed
    * active state). Use this to find a ruleset that exists in the enterprise
    * catalog but isn't currently active for this workspace.
+   *
+   * With `branch`, rows carry `evaluated_on_branch` from that branch's latest
+   * visible check and the response adds a `branch` block naming the evaluation.
    */
   async listWorkspaceRulesets(enterpriseId: string, workspaceId: string, branch?: string) {
     return this.request<{ data: Array<unknown>; branch?: unknown }>(

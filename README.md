@@ -82,11 +82,6 @@ The server gives your agent 23 tools, grouped into seven areas. Your saved sessi
 | `trigger_compliance_evaluation` | Start a compliance run on the code you have already pushed to the linked branch. | `workspace_id`, `ref?`, `ruleset_id?`, `rule_id?`, `rule_ids?` |
 | `list_compliance_findings` | See the pass or fail result for each rule in a run. | `workspace_id`, `ref?`, `status?` |
 | `get_compliance_eval_spec` | See the exact instructions the compliance checker follows. | `workspace_id` |
-| `list_compliance_exceptions` | See active exceptions and requests waiting for an approver. | `workspace_id` |
-| `submit_compliance_exceptions` | Request exceptions for intentional findings, or grant them when explicitly authorized. | `workspace_id`, `exceptions`, `mode?` |
-| `approve_compliance_exception` | Approve a pending exception request. | `workspace_id`, `rule_id` |
-| `reject_compliance_exception` | Reject a pending exception request with a reason. | `workspace_id`, `rule_id`, `reason` |
-| `revoke_compliance_exception` | End an active exception so its rule is enforced again. | `workspace_id`, `rule_id` |
 
 ### Compliance exceptions
 
