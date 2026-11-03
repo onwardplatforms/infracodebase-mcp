@@ -12,7 +12,17 @@ export interface ClientConfig {
   token?: string;
   getAccessToken?: AccessTokenProvider;
   authKind?: "oauth" | "legacy_token";
+  /**
+   * How long one API request may take before it is abandoned, in
+   * milliseconds. Defaults to {@link DEFAULT_REQUEST_TIMEOUT_MS}. Without a
+   * bound, a stalled connection holds the tool call open until the MCP client
+   * gives up on it, which can be hours.
+   */
+  requestTimeoutMs?: number;
 }
+
+/** The default bound on a single API request. */
+export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
 /** Shape of GET /me. Older self-hosted instances may lack the endpoint. */
 export interface Identity {
@@ -26,6 +36,7 @@ export class InfracodebaseClient {
   private baseUrl: string;
   private getAccessToken: AccessTokenProvider;
   private authKind: "oauth" | "legacy_token";
+  private requestTimeoutMs: number;
 
   constructor(config: ClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, ""); // Remove trailing slash
@@ -34,6 +45,7 @@ export class InfracodebaseClient {
     }
     this.getAccessToken = config.getAccessToken ?? (async () => config.token as string);
     this.authKind = config.authKind ?? (config.token ? "legacy_token" : "oauth");
+    this.requestTimeoutMs = config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   }
 
   /**
@@ -46,19 +58,31 @@ export class InfracodebaseClient {
       body?: unknown;
       /** The endpoint answers 204 with no body (approve, reject, revoke). */
       noContent?: boolean;
+      /** Override the client's request timeout for this one call. */
+      timeoutMs?: number;
     }
   ): Promise<T> {
     const url = `${this.baseUrl}${path}`;
-    const send = (token: string) =>
-      fetch(url, {
-        method,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-          "User-Agent": `@infracodebase/mcp/${VERSION}`,
-        },
-        body: options?.body ? JSON.stringify(options.body) : undefined,
-      });
+    const timeoutMs = options?.timeoutMs ?? this.requestTimeoutMs;
+    // Each attempt gets its own deadline, so the 401 retry below is not
+    // charged for the time the first attempt spent.
+    const send = async (token: string) => {
+      try {
+        return await fetch(url, {
+          method,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+            "User-Agent": `@infracodebase/mcp/${VERSION}`,
+          },
+          body: options?.body ? JSON.stringify(options.body) : undefined,
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+      } catch (err) {
+        if (isTimeout(err)) throw new ApiTimeoutError(method, url, timeoutMs);
+        throw err;
+      }
+    };
 
     const token = await this.getAccessToken();
     let response = await send(token);
@@ -408,6 +432,41 @@ export class InfracodebaseClient {
 // -----------------------------------------------------------------------------
 // Errors
 // -----------------------------------------------------------------------------
+
+/** fetch rejects with the signal's reason, a DOMException named TimeoutError. */
+function isTimeout(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    ((err as { name?: string }).name === "TimeoutError" ||
+      (err as { name?: string }).name === "AbortError")
+  );
+}
+
+/**
+ * The API did not answer in time. Carries the request so the message says
+ * which call stalled, and the bound so the fix (a slow instance, a proxy that
+ * holds connections, or a timeout set too low) is obvious.
+ */
+export class ApiTimeoutError extends Error {
+  constructor(
+    public method: string,
+    public url: string,
+    public timeoutMs: number
+  ) {
+    super(
+      `The API did not answer within ${formatDuration(timeoutMs)}: ${method} ${url}. ` +
+        "The instance may be down or slow; check the API URL and try again."
+    );
+    this.name = "ApiTimeoutError";
+  }
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const s = ms / 1000;
+  return `${Number.isInteger(s) ? s : s.toFixed(1)}s`;
+}
 
 /** The documented v1 error envelope (lib/api/v1/primitives.ts ErrorResponse). */
 interface ApiErrorBody {

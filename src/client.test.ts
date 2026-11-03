@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { readFileSync } from "fs";
-import { InfracodebaseClient, ApiError, formatApiError } from "./client.js";
+import {
+  InfracodebaseClient,
+  ApiError,
+  ApiTimeoutError,
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  formatApiError,
+} from "./client.js";
 
 /**
  * These tests exercise the one piece of real logic that touches the actual
@@ -602,5 +608,85 @@ describe("ApiError — message formatting", () => {
     expect(err.code).toBe("ruleset_not_found");
     expect(err.requestId).toBe("req_1");
     expect(err.status).toBe(404);
+  });
+});
+
+describe("InfracodebaseClient — request timeout", () => {
+  /** A fetch that never answers on its own and rejects the way the real one does when its signal fires. */
+  function stubHangingFetch() {
+    const fetchMock = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init.signal!.addEventListener("abort", () => reject(init.signal!.reason));
+        })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("hands every request a timeout signal, and a fast response is unaffected", async () => {
+    const fetchMock = stubFetch(jsonResponse({ data: [] }));
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+
+    await expect(client.listEnterprises()).resolves.toEqual({ data: [] });
+
+    expect(lastCall(fetchMock).init.signal).toBeInstanceOf(AbortSignal);
+    expect(lastCall(fetchMock).init.signal!.aborted).toBe(false);
+  });
+
+  it("fails with a readable error naming the request when the API does not answer in time", async () => {
+    stubHangingFetch();
+    const client = new InfracodebaseClient({
+      baseUrl: "https://api.example.com",
+      token: "t",
+      requestTimeoutMs: 20,
+    });
+
+    const err = await client.listEnterprises().catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ApiTimeoutError);
+    expect((err as Error).message).toContain("did not answer within 20ms");
+    expect((err as Error).message).toContain("GET https://api.example.com/enterprises");
+    expect(err).toMatchObject({ method: "GET", timeoutMs: 20 });
+  });
+
+  it("defaults to 30 seconds and lets one call override it", async () => {
+    expect(DEFAULT_REQUEST_TIMEOUT_MS).toBe(30_000);
+    const fetchMock = stubHangingFetch();
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+
+    // Reach into the private request helper to prove the per-call override wins.
+    const request = (client as unknown as { request: Function }).request.bind(client);
+    const err = await request("GET", "/me", { timeoutMs: 20 }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ApiTimeoutError);
+    expect(err).toMatchObject({ timeoutMs: 20 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives the 401 refresh retry its own deadline", async () => {
+    const fetchMock = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((resolve, reject) => {
+          init.signal!.addEventListener("abort", () => reject(init.signal!.reason));
+          if (fetchMock.mock.calls.length === 1) {
+            resolve(jsonResponse({ error: "unauthorized" }, 401));
+          }
+          // The retry hangs, so it must time out on its own signal.
+        })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new InfracodebaseClient({
+      baseUrl: "https://api.example.com",
+      getAccessToken: async () => "access",
+      requestTimeoutMs: 20,
+    });
+
+    const err = await client.listEnterprises().catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ApiTimeoutError);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const signals = fetchMock.mock.calls.map((c) => (c[1] as RequestInit).signal);
+    expect(signals[0]).not.toBe(signals[1]);
   });
 });
