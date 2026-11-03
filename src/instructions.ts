@@ -14,10 +14,12 @@ export const SERVER_INSTRUCTIONS_BUDGET = 1800;
 export const SERVER_INSTRUCTIONS = `Before writing or changing any infrastructure-as-code (Terraform, Pulumi, CloudFormation, Bicep, Kubernetes, Helm, Ansible), including bootstrapping IaC in an empty repo, call get_workspace_context first, on every IaC turn. It says whether this repo is governed by infracodebase and which rulesets and coding guidelines apply. Compliance gates here are mandatory, not advisory: the job is to deliver the change and prove it complies, not to finish quickly.
 
 Read the returned status:
-- linked: you hold the rulesets and guidelines. Write against them. They are scoped to a branch (auto-detected when the repo is): on a feature branch they come from its latest completed check, and \`coverage.rulesets_source: workspace_settings\` with automatic discovery means a full check will evaluate more rulesets than listed, so do not call the list complete.
+- linked: you hold the rulesets and guidelines. Write against them.
 - unlinked: no rules are in force yet. Do not write IaC. Call plan_workspace_setup (read-only), ask the user the question in \`message\` using the plan's options, and call setup_workspace only after they answer. Then reload the context.
 - no_access or ambiguous: follow \`message\`.
 
 Compliance evaluations run against code pushed to the linked branch, never your local tree. Commit and push first, pass \`ref\` as the branch name, and prefer scoped runs: a push to the default branch or to a branch with an open pull request already auto-runs a full evaluation. Trigger results carry a \`url\` and a \`next\` field. Share the url with the user and stop; never poll, sleep, or estimate how long a run will take.
 
-Always relay a \`warning\` or \`repository_error\` from create, link, or setup results: they mean pushes will not trigger compliance until the repo is re-linked. For intentional gaps, submit exceptions only after the user confirms them.`;
+When failures remain that the code can't or shouldn't fix, offer exceptions: show the user each rule with its type and justification, and call submit_compliance_exceptions only after they agree. It requests review by default; grant only when the user explicitly says grant.
+
+Always relay a \`warning\` or \`repository_error\` from create, link, or setup results: they mean pushes will not trigger compliance until the repo is re-linked.`;

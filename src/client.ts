@@ -4,13 +4,12 @@
  * Calls the public /api/v1 endpoints with authentication.
  */
 
-import type { AccessTokenProvider } from "./oauth.js";
 import { VERSION } from "./version.js";
 
 export interface ClientConfig {
   baseUrl: string;
   token?: string;
-  getAccessToken?: AccessTokenProvider;
+  getAccessToken?: () => Promise<string>;
   authKind?: "oauth" | "legacy_token";
 }
 
@@ -24,7 +23,7 @@ export interface Identity {
 
 export class InfracodebaseClient {
   private baseUrl: string;
-  private getAccessToken: AccessTokenProvider;
+  private getAccessToken: () => Promise<string>;
   private authKind: "oauth" | "legacy_token";
 
   constructor(config: ClientConfig) {
@@ -47,36 +46,26 @@ export class InfracodebaseClient {
     }
   ): Promise<T> {
     const url = `${this.baseUrl}${path}`;
-    const send = (token: string) =>
-      fetch(url, {
-        method,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-          "User-Agent": `@infracodebase/mcp/${VERSION}`,
-        },
-        body: options?.body ? JSON.stringify(options.body) : undefined,
-      });
-
     const token = await this.getAccessToken();
-    let response = await send(token);
-    // A login token can be refused before its saved expiry, for example when
-    // this computer's clock runs behind. Refresh once and retry before telling
-    // the user to sign in again.
-    if (response.status === 401 && this.authKind === "oauth") {
-      response = await send(await this.getAccessToken({ rejected: token }));
-    }
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "User-Agent": `@infracodebase/mcp/${VERSION}`,
+    };
+
+    const response = await fetch(url, {
+      method,
+      headers,
+      body: options?.body ? JSON.stringify(options.body) : undefined,
+    });
 
     if (!response.ok) {
       const errorText = await response.text();
       throw new ApiError(response.status, errorText, path, this.baseUrl, this.authKind);
     }
 
-    // Exception approval, rejection, and revocation deliberately return 204.
-    // Treat every no-content success uniformly so callers do not fail while
-    // parsing an otherwise successful mutation as JSON.
+    // Decisions like approve or revoke answer 204 with no body.
     if (response.status === 204) return undefined as T;
-
     return (await response.json()) as T;
   }
 
@@ -121,14 +110,11 @@ export class InfracodebaseClient {
     repoUrl?: string;
     workspaceId?: string;
     iacTool?: string;
-    /** Scope rulesets and the latest evaluation to this branch's last completed check. */
-    branch?: string;
   }) {
     const query = new URLSearchParams();
     if (params.repoUrl) query.set("repo_url", params.repoUrl);
     if (params.workspaceId) query.set("workspace_id", params.workspaceId);
     if (params.iacTool) query.set("iac_tool", params.iacTool);
-    if (params.branch) query.set("branch", params.branch);
     const qs = query.toString();
 
     return this.request<unknown>("GET", `/workspace-context${qs ? `?${qs}` : ""}`);
@@ -169,15 +155,11 @@ export class InfracodebaseClient {
    * null if it's never opted in/out) and `effective_enabled` (the computed
    * active state). Use this to find a ruleset that exists in the enterprise
    * catalog but isn't currently active for this workspace.
-   *
-   * With `branch`, rows carry `evaluated_on_branch` from that branch's latest
-   * visible check and the response adds a `branch` block naming the evaluation.
    */
-  async listWorkspaceRulesets(enterpriseId: string, workspaceId: string, branch?: string) {
-    return this.request<{ data: Array<unknown>; branch?: unknown }>(
+  async listWorkspaceRulesets(enterpriseId: string, workspaceId: string) {
+    return this.request<{ data: Array<unknown> }>(
       "GET",
-      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/rulesets` +
-        (branch ? `?branch=${encodeURIComponent(branch)}` : "")
+      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/rulesets`
     );
   }
 
@@ -247,22 +229,19 @@ export class InfracodebaseClient {
     return this.request<unknown>("GET", path);
   }
 
-  async getComplianceEvalSpec(enterpriseId: string, workspaceId: string) {
-    return this.request<unknown>(
-      "GET",
-      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/eval-spec`
-    );
-  }
-
-  /** List active compliance exceptions and pending exception requests. */
+  /** Active exceptions and open requests for a workspace. */
   async listComplianceExceptions(enterpriseId: string, workspaceId: string) {
-    return this.request<unknown>(
+    return this.request<{ data: unknown[] }>(
       "GET",
       `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/exceptions`
     );
   }
 
-  /** Request an exception, or directly grant one when the caller is an approver. */
+  /**
+   * Request an exception (the default), or grant one with mode "grant". The
+   * server refuses a grant from anyone without compliance approve permission
+   * rather than downgrading it to a request.
+   */
   async submitComplianceException(
     enterpriseId: string,
     workspaceId: string,
@@ -270,20 +249,23 @@ export class InfracodebaseClient {
       rule_id: string;
       type: "risk_acceptance" | "not_applicable";
       justification: string;
-      expires_in_days?: number | null;
+      expires_in_days?: number;
       evaluation_id?: string;
       mode?: "request" | "grant";
     }
   ) {
-    return this.request<unknown>(
-      "POST",
-      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/exceptions`,
-      { body }
-    );
+    return this.request<{
+      rule_id: string;
+      rule_title: string;
+      state: "active" | "pending";
+      request_number: number | null;
+    }>("POST", `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/exceptions`, {
+      body,
+    });
   }
 
   async approveComplianceException(enterpriseId: string, workspaceId: string, ruleId: string) {
-    return this.request<unknown>(
+    await this.request<void>(
       "POST",
       `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/exceptions/${encodeURIComponent(ruleId)}/approve`
     );
@@ -295,7 +277,7 @@ export class InfracodebaseClient {
     ruleId: string,
     reason: string
   ) {
-    return this.request<unknown>(
+    await this.request<void>(
       "POST",
       `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/exceptions/${encodeURIComponent(ruleId)}/reject`,
       { body: { reason } }
@@ -303,9 +285,16 @@ export class InfracodebaseClient {
   }
 
   async revokeComplianceException(enterpriseId: string, workspaceId: string, ruleId: string) {
-    return this.request<unknown>(
+    await this.request<void>(
       "DELETE",
       `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/exceptions/${encodeURIComponent(ruleId)}`
+    );
+  }
+
+  async getComplianceEvalSpec(enterpriseId: string, workspaceId: string) {
+    return this.request<unknown>(
+      "GET",
+      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/eval-spec`
     );
   }
 

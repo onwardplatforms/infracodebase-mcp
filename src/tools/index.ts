@@ -52,6 +52,7 @@ export const TOOLS: ToolDef[] = [
   triggerComplianceEvaluation,
   listComplianceFindings,
   getComplianceEvalSpec,
+  // Compliance exceptions
   listComplianceExceptions,
   submitComplianceExceptions,
   approveComplianceException,
