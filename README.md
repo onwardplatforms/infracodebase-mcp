@@ -64,7 +64,7 @@ The server gives your agent 23 tools, grouped into seven areas. Your saved sessi
 | Tool | What it does | Key inputs |
 | --- | --- | --- |
 | `list_enterprises` | Find the enterprises you can access. | (none) |
-| `list_workspaces` | List the projects in an enterprise, and see which repo each one is linked to. | `enterprise_id`, `kinds?` |
+| `list_workspaces` | List the projects in an enterprise, and see which repo each one is linked to. One call returns at most 100; `truncated` says when there are more, and `slug` reaches one directly. | `enterprise_id`, `kinds?`, `slug?`, `limit?` |
 | `get_workspace_context` | The best place to start. Tells you whether a repo is governed, which rules apply, its coding guidelines, and its latest compliance result. Auto-detects the repo when called with no arguments. | `repo_url?` or `workspace_id?`, `iac_tool?` |
 
 ### Rulesets

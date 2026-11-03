@@ -12,6 +12,7 @@
 
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { WORKSPACE_PAGE_LIMIT } from "../client.js";
 
 /**
  * Mirrors the API's `iac_tool` enum exactly. Helm is deliberately absent: the
@@ -82,6 +83,22 @@ export const TOOL_SHAPES = {
 
   list_workspaces: {
     enterprise_id: z.string().min(1).describe("Enterprise ID from list_enterprises."),
+    slug: z
+      .string()
+      .min(1)
+      .describe(
+        "Return only the workspace with this slug. The way to reach a workspace a full page did not show."
+      )
+      .optional(),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(WORKSPACE_PAGE_LIMIT)
+      .describe(
+        `Page size, 1 to ${WORKSPACE_PAGE_LIMIT} (the default). The API has no cursor, so this is the most one call can return.`
+      )
+      .optional(),
     kinds: z
       .array(z.enum(WORKSPACE_KINDS))
       .describe(
@@ -409,7 +426,7 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   list_enterprises:
     "List enterprises the caller belongs to. Use this to find an enterprise_id for list_workspaces. Each row's workspace_count only counts STANDARD-kind workspaces — pass kinds: ['STANDARD','TEMPLATE','MODULE'] on list_workspaces if that number doesn't match what you see there.",
   list_workspaces:
-    "List workspaces you have access to in an enterprise. Each workspace includes its linked repo if any. Use this to find workspace IDs. Defaults to STANDARD-kind workspaces only — pass kinds to include template and/or module workspaces too.",
+    "List workspaces you have access to in an enterprise. Each workspace includes its linked repo if any. Use this to find workspace IDs. Defaults to STANDARD-kind workspaces only — pass kinds to include template and/or module workspaces too. One call returns at most 100 rows and there is no cursor: when `truncated` is true the enterprise has more, so find a specific workspace with slug, or with get_workspace_context and its repo_url or workspace_id, rather than assuming it is missing.",
   get_workspace_context:
     "Start here before writing or changing any IaC. Returns workspace identity, applicable rulesets, coding guidelines, latest compliance state, and a module catalog summary. Call it with no arguments to auto-detect the repo from the client's workspace root or the server's working directory (the result then carries resolved_repo_url and resolved_from), or pass repo_url (the git remote) or workspace_id. `status` is one of: linked (context returned), unlinked (no workspace governs this repo, so no rules are in force: do not write IaC yet; follow `message`, then call plan_workspace_setup), no_access (a workspace exists but you cannot see it; do not imply it is missing), or ambiguous (the repo matches workspaces in several enterprises; pick from `candidates` and call again with workspace_id). Every non-linked status includes a `message` saying what to do next. The rulesets and latest compliance state are scoped to a branch: explicit `branch`, else the checked-out branch of a checkout of this repo (reported as resolved_branch; branch_detection says why none was used and the default branch answered). On a feature branch they come from its latest completed check. Read `coverage.rulesets_source`: `workspace_settings` means no check is visible on the branch yet, and when `coverage.discovery` is automatic a full check will evaluate more rulesets than are listed, so never present the list as the complete set of rules that apply.",
   get_ruleset_details:

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { createToolContext, registerTool, WrongEnterpriseError, type ToolDef } from "./helpers.js";
 import { TOOL_ANNOTATIONS } from "./validation.js";
 import { mockClient } from "../test-helpers.js";
-import { ApiError } from "../client.js";
+import { ApiError, WORKSPACE_PAGE_LIMIT } from "../client.js";
 import type { ServerContext } from "../server.js";
 
 function serverContext(clientMethods = {}): ServerContext {
@@ -121,7 +121,91 @@ describe("createToolContext — listAllWorkspaces", () => {
 
     await tools.listAllWorkspaces();
 
-    expect(listWorkspaces).toHaveBeenCalledWith("ent_1", ["STANDARD", "TEMPLATE", "MODULE"]);
+    expect(listWorkspaces).toHaveBeenCalledWith("ent_1", ["STANDARD", "TEMPLATE", "MODULE"], {
+      limit: WORKSPACE_PAGE_LIMIT,
+    });
+  });
+});
+
+describe("createToolContext — truncated enterprises", () => {
+  const repo = { owner: "acme", name: "infra" };
+  const fullPage = Array.from({ length: WORKSPACE_PAGE_LIMIT }, (_, i) => ({ id: `ws_page_${i}` }));
+
+  it("finds a workspace past a full page by fetching it directly from that enterprise", async () => {
+    const ctx = serverContext({
+      listEnterprises: vi.fn().mockResolvedValue({ data: [{ id: "ent_small" }, { id: "ent_big" }] }),
+      listWorkspaces: vi.fn(async (id: string) => ({
+        data: id === "ent_big" ? fullPage : [{ id: "ws_small" }],
+      })),
+      getWorkspace: vi.fn(async (enterpriseId: string, workspaceId: string) => {
+        if (enterpriseId === "ent_big" && workspaceId === "ws_far")
+          return { id: "ws_far", linked_repository: repo };
+        throw new ApiError(404, "not found", "/x");
+      }),
+    });
+    const tools = createToolContext(ctx);
+
+    expect(await tools.getWorkspaceRepo("ws_far")).toEqual(repo);
+    // Only the enterprise whose list was full is probed, once.
+    expect(ctx.client.getWorkspace).toHaveBeenCalledTimes(1);
+    expect(ctx.client.getWorkspace).toHaveBeenCalledWith("ent_big", "ws_far");
+    // The hit warms the enterprise map, so the next lookup needs no scan.
+    expect(await tools.getEnterpriseForWorkspace("ws_far")).toBe("ent_big");
+    expect(ctx.client.listEnterprises).toHaveBeenCalledTimes(1);
+  });
+
+  it("resolves the enterprise of a workspace past a full page the same way", async () => {
+    const ctx = serverContext({
+      listEnterprises: vi.fn().mockResolvedValue({ data: [{ id: "ent_big" }] }),
+      listWorkspaces: vi.fn().mockResolvedValue({ data: fullPage }),
+      getWorkspace: vi.fn().mockResolvedValue({ id: "ws_far", linked_repository: null }),
+    });
+    const tools = createToolContext(ctx);
+
+    expect(await tools.getEnterpriseForWorkspace("ws_far")).toBe("ent_big");
+    expect(ctx.client.getWorkspace).toHaveBeenCalledWith("ent_big", "ws_far");
+    // The probe also learned the repo, so no further request is needed for it.
+    expect(await tools.getWorkspaceRepo("ws_far")).toBeNull();
+    expect(ctx.client.getWorkspace).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats a 404 from every full enterprise as a definitive miss", async () => {
+    const ctx = serverContext({
+      listEnterprises: vi.fn().mockResolvedValue({ data: [{ id: "ent_big" }] }),
+      listWorkspaces: vi.fn().mockResolvedValue({ data: fullPage }),
+      getWorkspace: vi.fn().mockRejectedValue(new ApiError(404, "not found", "/x")),
+    });
+    const tools = createToolContext(ctx);
+
+    expect(await tools.getWorkspaceRepo("ws_gone")).toBeNull();
+    // Remembered: a second hintless call neither rescans nor probes again.
+    expect(await tools.getWorkspaceRepo("ws_gone")).toBeNull();
+    expect(ctx.client.listEnterprises).toHaveBeenCalledTimes(1);
+    expect(ctx.client.getWorkspace).toHaveBeenCalledTimes(1);
+    await expect(tools.getEnterpriseForWorkspace("ws_gone")).rejects.toThrow(/not found in any/);
+  });
+
+  it("surfaces a failed probe instead of reading it as 'no such workspace'", async () => {
+    const ctx = serverContext({
+      listEnterprises: vi.fn().mockResolvedValue({ data: [{ id: "ent_big" }] }),
+      listWorkspaces: vi.fn().mockResolvedValue({ data: fullPage }),
+      getWorkspace: vi.fn().mockRejectedValue(new ApiError(429, "slow down", "/x")),
+    });
+    const tools = createToolContext(ctx);
+
+    await expect(tools.getWorkspaceRepo("ws_far")).rejects.toThrow(/429/);
+    await expect(tools.getEnterpriseForWorkspace("ws_far")).rejects.toThrow(/429/);
+  });
+
+  it("does not probe when the page was not full", async () => {
+    const ctx = serverContext({
+      listEnterprises: vi.fn().mockResolvedValue({ data: [{ id: "ent_1" }] }),
+      listWorkspaces: vi.fn().mockResolvedValue({ data: fullPage.slice(0, -1) }),
+    });
+    const tools = createToolContext(ctx);
+
+    expect(await tools.getWorkspaceRepo("ws_far")).toBeNull();
+    expect(ctx.client.getWorkspace).not.toHaveBeenCalled();
   });
 });
 

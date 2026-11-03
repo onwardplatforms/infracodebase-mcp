@@ -16,7 +16,7 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { ApiError, type InfracodebaseClient } from "../client.js";
+import { ApiError, WORKSPACE_PAGE_LIMIT, type InfracodebaseClient } from "../client.js";
 import type { ServerContext } from "../server.js";
 import {
   createBranchResolver,
@@ -138,6 +138,11 @@ export function createToolContext(context: ServerContext): ToolContext {
 
   /** Enterprises the last scan could not list, so a "not found" can say so. */
   let skippedEnterprises: Array<{ id: string; error: string }> = [];
+  /**
+   * Enterprises whose list came back full. The API has no cursor, so a full
+   * page may hide workspaces; those are found by a direct fetch instead.
+   */
+  let truncatedEnterprises: string[] = [];
 
   /**
    * List every workspace across every accessible enterprise, tagged with its
@@ -156,8 +161,11 @@ export function createToolContext(context: ServerContext): ToolContext {
         // One enterprise that cannot be listed (expired plan, revoked access)
         // must not hide every other enterprise's workspaces.
         try {
-          const rows = (await client.listWorkspaces(e.id, ["STANDARD", "TEMPLATE", "MODULE"]))
-            .data as ApiWorkspace[];
+          const rows = (
+            await client.listWorkspaces(e.id, ["STANDARD", "TEMPLATE", "MODULE"], {
+              limit: WORKSPACE_PAGE_LIMIT,
+            })
+          ).data as ApiWorkspace[];
           return { id: e.id, workspaces: rows.map((w) => ({ ...w, enterprise_id: e.id })) };
         } catch (err) {
           console.error(`[infracodebase-mcp] skipping enterprise ${e.id}: ${messageOf(err)}`);
@@ -176,6 +184,9 @@ export function createToolContext(context: ServerContext): ToolContext {
       throw (hinted ?? failed[0]).error;
     }
     skippedEnterprises = failed.map((f) => ({ id: f.id, error: messageOf(f.error) }));
+    truncatedEnterprises = results
+      .filter((r) => "workspaces" in r && r.workspaces.length >= WORKSPACE_PAGE_LIMIT)
+      .map((r) => r.id);
     const all: WorkspaceEntry[] = results.flatMap((r) => ("workspaces" in r ? r.workspaces : []));
     for (const w of all) workspaceEnterpriseMap.set(w.id, w.enterprise_id);
     workspaceRepoMap.clear();
@@ -206,6 +217,22 @@ export function createToolContext(context: ServerContext): ToolContext {
     }
   }
 
+  /**
+   * Look for a workspace the scan did not list in the enterprises whose list
+   * was full, one direct fetch each. A hit warms both maps. Undefined when
+   * no truncated enterprise has it.
+   */
+  async function probeTruncated(workspaceId: string): Promise<WorkspaceEntry | undefined> {
+    for (const enterpriseId of truncatedEnterprises) {
+      const w = await fetchWorkspace(enterpriseId, workspaceId);
+      if (!w) continue;
+      workspaceEnterpriseMap.set(workspaceId, enterpriseId);
+      workspaceRepoMap.set(workspaceId, linkedRepoOf(w));
+      return { ...w, enterprise_id: enterpriseId };
+    }
+    return undefined;
+  }
+
   async function getWorkspaceRepo(workspaceId: string, enterpriseHint?: string) {
     const knownEnterprise = workspaceEnterpriseMap.get(workspaceId);
     // A repo cached by a prior scan belongs to the enterprise that scan
@@ -231,6 +258,7 @@ export function createToolContext(context: ServerContext): ToolContext {
     if (!enterpriseHint && unlistedWorkspaces.has(workspaceId)) return null;
 
     await listAllWorkspaces();
+    if (!workspaceRepoMap.has(workspaceId)) await probeTruncated(workspaceId);
     const found = workspaceRepoMap.get(workspaceId);
     if (found !== undefined) {
       const actual = workspaceEnterpriseMap.get(workspaceId);
@@ -247,9 +275,10 @@ export function createToolContext(context: ServerContext): ToolContext {
           `Retry, or pass enterprise_id to fetch it directly.`
       );
     }
-    // Not listed by a complete scan (not among the first 100 of its
-    // enterprise, or gone): remember that instead of rescanning on every
-    // hintless call. forgetWorkspaceRepo or the next scan clears it.
+    // Not listed by a complete scan, and not in any enterprise whose list
+    // was full either (the direct fetch there is authoritative): remember
+    // that instead of rescanning on every hintless call. forgetWorkspaceRepo
+    // or the next scan clears it.
     unlistedWorkspaces.add(workspaceId);
     return null;
   }
@@ -271,6 +300,8 @@ export function createToolContext(context: ServerContext): ToolContext {
     await listAllWorkspaces(); // warms the map
     const found = workspaceEnterpriseMap.get(workspaceId);
     if (found) return found;
+    const probed = await probeTruncated(workspaceId);
+    if (probed) return probed.enterprise_id;
 
     const unlisted = skippedEnterprises.length
       ? ` It may be in an enterprise that could not be listed: ${skippedEnterprises
