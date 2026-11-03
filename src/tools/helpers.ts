@@ -207,10 +207,17 @@ export function createToolContext(context: ServerContext): ToolContext {
   }
 
   async function getWorkspaceRepo(workspaceId: string, enterpriseHint?: string) {
+    const knownEnterprise = workspaceEnterpriseMap.get(workspaceId);
+    // A repo cached by a prior scan belongs to the enterprise that scan
+    // recorded. Do not let that cache bypass validation of a new, conflicting
+    // explicit hint; the tool's request would otherwise fail later as an
+    // opaque 404.
+    if (enterpriseHint && knownEnterprise && knownEnterprise !== enterpriseHint)
+      throw new WrongEnterpriseError(workspaceId, enterpriseHint, knownEnterprise);
     const cached = workspaceRepoMap.get(workspaceId);
     if (cached !== undefined) return cached;
 
-    const enterpriseId = enterpriseHint ?? workspaceEnterpriseMap.get(workspaceId);
+    const enterpriseId = enterpriseHint ?? knownEnterprise;
     if (enterpriseId) {
       const w = await fetchWorkspace(enterpriseId, workspaceId);
       if (w) {

@@ -248,6 +248,21 @@ describe("createToolContext — getWorkspaceRepo", () => {
     );
   });
 
+  it("validates a conflicting hint before returning a repo warmed by a scan", async () => {
+    const ctx = serverContext({ getWorkspace: vi.fn() });
+    ctx.workspaceEnterpriseMap.set("ws_1", "ent_1");
+    const tools = createToolContext(ctx);
+
+    // A first lookup populates the repo cache for the known enterprise.
+    ctx.client.getWorkspace.mockResolvedValue({ id: "ws_1", linked_repository: repo });
+    expect(await tools.getWorkspaceRepo("ws_1")).toEqual(repo);
+
+    await expect(tools.getWorkspaceRepo("ws_1", "ent_wrong")).rejects.toThrow(
+      new WrongEnterpriseError("ws_1", "ent_wrong", "ent_1").message
+    );
+    expect(ctx.client.getWorkspace).toHaveBeenCalledTimes(1);
+  });
+
   it("does not remember a miss from an incomplete scan, and a later hint tries the direct fetch", async () => {
     let flaky = true;
     const ctx = serverContext({
