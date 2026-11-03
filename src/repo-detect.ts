@@ -71,28 +71,6 @@ function git(args: string[]): Promise<string | null> {
   });
 }
 
-/** owner/name from any remote form: https, ssh scp-style, or a bare path. */
-export function parseRepoIdentity(remote: string): { owner: string; name: string } | null {
-  const m =
-    remote.match(/[/:]([^/:]+)\/([^/]+?)(?:\.git)?\/?$/) ??
-    remote.match(/^([^/]+)\/([^/]+?)(?:\.git)?$/);
-  return m ? { owner: m[1].toLowerCase(), name: m[2].toLowerCase() } : null;
-}
-
-/** True when a checkout's remote names the same owner/name as a workspace's repo. */
-export function remoteMatchesRepo(
-  remote: string,
-  repo: { owner?: string | null; name?: string | null } | null | undefined
-): boolean {
-  if (!repo?.owner || !repo.name) return false;
-  const parsed = parseRepoIdentity(remote);
-  return (
-    !!parsed &&
-    parsed.owner === repo.owner.toLowerCase() &&
-    parsed.name === repo.name.toLowerCase()
-  );
-}
-
 /** `origin` first; otherwise the first remote the repo has. */
 export async function gitRemoteUrl(dir: string): Promise<string | null> {
   const origin = await git(["-C", dir, "remote", "get-url", "origin"]);
@@ -103,6 +81,70 @@ export async function gitRemoteUrl(dir: string): Promise<string | null> {
     .map((r) => r.trim())
     .find(Boolean);
   return first ? git(["-C", dir, "remote", "get-url", first]) : null;
+}
+
+/** A repo identity as the platform stores it: full provider path, split into owner and name. */
+export interface RemoteRef {
+  host: string;
+  owner: string;
+  name: string;
+  displayPath: string;
+}
+
+/**
+ * Parse a git remote the way the platform does (a port of the app's
+ * parseRemoteRef): the path keeps every segment, so GitLab subgroups survive,
+ * and Azure DevOps' `_git` and `v3/` markers are dropped so the result matches
+ * the stored display path. Handles ssh scp-style, https (with userinfo), and
+ * bare `owner/repo` shorthand. Null when the input is not a remote.
+ */
+export function parseRemoteRef(input: string): RemoteRef | null {
+  const trimmed = input.trim().replace(/\.git$/, "");
+  const split = (rawHost: string, rawPath: string): RemoteRef | null => {
+    const host = (rawHost === "ssh.dev.azure.com" ? "dev.azure.com" : rawHost).toLowerCase();
+    const clean = rawPath
+      .replace(/\/+$/, "")
+      .replace(/^v3\//, "")
+      .replace(/\/_git\//, "/");
+    const slash = clean.lastIndexOf("/");
+    if (slash <= 0 || slash === clean.length - 1) return null;
+    return { host, owner: clean.slice(0, slash), name: clean.slice(slash + 1), displayPath: clean };
+  };
+  const sshUrl = trimmed.match(/^ssh:\/\/(?:[^@/\s]+@)?([^\s/:]+)(?::\d+)?\/([^?#\s]+)/);
+  if (sshUrl) return split(sshUrl[1], sshUrl[2]);
+  const ssh = trimmed.match(/^[^\s@]+@([^\s@:/]+):(.+)$/);
+  if (ssh) return split(ssh[1], ssh[2]);
+  const https = trimmed.match(/^https?:\/\/(?:[^@/\s]+@)?(?:www\.)?([^\s/?#@]+)\/([^?#\s]+)/);
+  if (https) return split(https[1], https[2]);
+  const short = trimmed.match(/^([^/\s@:]+)\/([^/\s@:]+)$/);
+  if (short) return split("github.com", `${short[1]}/${short[2]}`);
+  return null;
+}
+
+/** What the API tells us about a workspace's linked repo. Older servers send only owner and name. */
+export interface LinkedRepo {
+  owner?: string | null;
+  name?: string | null;
+  host?: string | null;
+  display_path?: string | null;
+}
+
+/**
+ * True when a checkout's remote is the workspace's repo. Compares the full
+ * display path when the server sends one (so nested GitLab groups and Azure
+ * DevOps projects match), and the host when both sides know it; falls back to
+ * owner and name for servers that send nothing more.
+ */
+export function remoteMatchesRepo(remote: string, repo: LinkedRepo | null | undefined): boolean {
+  const parsed = parseRemoteRef(remote);
+  if (!parsed || !repo) return false;
+  const lower = (v: string | null | undefined) => (v ?? "").toLowerCase();
+  if (repo.display_path) {
+    if (lower(repo.display_path) !== parsed.displayPath.toLowerCase()) return false;
+    return !repo.host || lower(repo.host) === parsed.host;
+  }
+  if (!repo.owner || !repo.name) return false;
+  return lower(repo.owner) === parsed.owner.toLowerCase() && lower(repo.name) === parsed.name.toLowerCase();
 }
 
 /**
@@ -205,7 +247,7 @@ export function createRepoResolver(deps: RepoDetectDeps) {
 export function createBranchResolver(deps: RepoDetectDeps) {
   return async function resolveBranch(
     explicit?: string,
-    options: { repo?: { owner?: string | null; name?: string | null } | null } = {}
+    options: { repo?: LinkedRepo | null } = {}
   ): Promise<BranchDetection> {
     if (explicit) return { branch: explicit, resolved_from: "argument" };
     if (!deps.gitBranch) return { branch: null, reason: "no_checkout" };

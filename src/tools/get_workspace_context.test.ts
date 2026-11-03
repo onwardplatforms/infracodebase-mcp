@@ -210,7 +210,9 @@ describe("get_workspace_context", () => {
 
     const result = await getWorkspaceContext.run(ctx, { repo_url: "git@github.com:Acme/Infra.git" });
 
-    expect(resolveBranch).toHaveBeenCalledWith(undefined, { repo: { owner: "acme", name: "infra" } });
+    expect(resolveBranch).toHaveBeenCalledWith(undefined, {
+      repo: { owner: "Acme", name: "Infra", host: "github.com", display_path: "Acme/Infra" },
+    });
     expect(client.resolveWorkspaceContext).toHaveBeenCalledWith(
       expect.objectContaining({ repoUrl: "git@github.com:Acme/Infra.git", branch: "release/1" })
     );

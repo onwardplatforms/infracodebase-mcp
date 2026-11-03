@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import {
   createBranchResolver,
   createRepoResolver,
-  parseRepoIdentity,
+  parseRemoteRef,
   remoteMatchesRepo,
 } from "./repo-detect.js";
 
@@ -179,11 +179,47 @@ describe("branch detection", () => {
     expect(await resolve()).toEqual({ branch: "feature/other", resolved_from: "roots" });
   });
 
-  it("recognises the same repo across remote spellings", () => {
-    expect(parseRepoIdentity("https://github.com/Acme/Infra.git")).toEqual({ owner: "acme", name: "infra" });
-    expect(parseRepoIdentity("git@gitlab.com:group/project.git")).toEqual({ owner: "group", name: "project" });
-    expect(parseRepoIdentity("acme/infra")).toEqual({ owner: "acme", name: "infra" });
-    expect(parseRepoIdentity("not a remote")).toBeNull();
+  it("parses remotes the way the platform stores them, keeping nested paths", () => {
+    expect(parseRemoteRef("https://github.com/Acme/Infra.git")).toEqual({
+      host: "github.com",
+      owner: "Acme",
+      name: "Infra",
+      displayPath: "Acme/Infra",
+    });
+    expect(parseRemoteRef("git@gitlab.com:group/subgroup/project.git")).toEqual({
+      host: "gitlab.com",
+      owner: "group/subgroup",
+      name: "project",
+      displayPath: "group/subgroup/project",
+    });
+    expect(parseRemoteRef("https://acme@dev.azure.com/acme/Platform/_git/infra")).toEqual({
+      host: "dev.azure.com",
+      owner: "acme/Platform",
+      name: "infra",
+      displayPath: "acme/Platform/infra",
+    });
+    expect(parseRemoteRef("git@ssh.dev.azure.com:v3/acme/Platform/infra")).toMatchObject({
+      host: "dev.azure.com",
+      displayPath: "acme/Platform/infra",
+    });
+    expect(parseRemoteRef("ssh://git@ghe.acme.com:2222/owner/repo.git")).toMatchObject({
+      host: "ghe.acme.com",
+      displayPath: "owner/repo",
+    });
+    expect(parseRemoteRef("acme/infra")).toMatchObject({ host: "github.com", displayPath: "acme/infra" });
+    expect(parseRemoteRef("not a remote")).toBeNull();
+  });
+
+  it("matches on the full display path when the server sends one, else on owner and name", () => {
+    const nested = {
+      owner: "group/subgroup",
+      name: "project",
+      host: "gitlab.com",
+      display_path: "group/subgroup/project",
+    };
+    expect(remoteMatchesRepo("git@gitlab.com:group/subgroup/project.git", nested)).toBe(true);
+    expect(remoteMatchesRepo("git@gitlab.com:other/subgroup/project.git", nested)).toBe(false);
+    expect(remoteMatchesRepo("git@github.com:group/subgroup/project.git", nested)).toBe(false);
     expect(remoteMatchesRepo("git@github.com:acme/infra.git", { owner: "Acme", name: "Infra" })).toBe(true);
     expect(remoteMatchesRepo("git@github.com:acme/infra.git", { owner: "acme", name: "other" })).toBe(false);
     expect(remoteMatchesRepo("git@github.com:acme/infra.git", null)).toBe(false);

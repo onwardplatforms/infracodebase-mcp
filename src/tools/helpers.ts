@@ -24,6 +24,7 @@ import {
   gitBranchName,
   gitRemoteUrl,
   type BranchDetection,
+  type LinkedRepo,
   type ResolvedRepo,
 } from "../repo-detect.js";
 import { TOOL_SHAPES, TOOL_DESCRIPTIONS, TOOL_ANNOTATIONS, type ToolName } from "./validation.js";
@@ -34,7 +35,10 @@ export type Args = Record<string, any>;
 export interface WorkspaceEntry {
   id: string;
   enterprise_id: string;
-  repo?: { owner?: string; name?: string } | null;
+  /** The API's field for the linked repo. */
+  linked_repository?: LinkedRepo | null;
+  /** Older shape, kept so a stale server still resolves. */
+  repo?: LinkedRepo | null;
 }
 
 /**
@@ -59,12 +63,9 @@ export interface ToolContext {
    * checked-out branch of the client's workspace root or the server's working
    * directory. Null when no branch can be detected.
    */
-  resolveBranch(
-    explicit?: string,
-    options?: { repo?: { owner?: string | null; name?: string | null } | null }
-  ): Promise<BranchDetection>;
+  resolveBranch(explicit?: string, options?: { repo?: LinkedRepo | null }): Promise<BranchDetection>;
   /** The linked repo of a workspace the caller can see, or null when unknown. Cache-backed. */
-  getWorkspaceRepo(workspaceId: string): Promise<{ owner?: string; name?: string } | null>;
+  getWorkspaceRepo(workspaceId: string): Promise<LinkedRepo | null>;
 }
 
 /**
@@ -125,11 +126,11 @@ export function createToolContext(context: ServerContext): ToolContext {
     const all = perEnterprise.flat();
     for (const w of all) workspaceEnterpriseMap.set(w.id, w.enterprise_id);
     workspaceRepoMap.clear();
-    for (const w of all) workspaceRepoMap.set(w.id, w.repo ?? null);
+    for (const w of all) workspaceRepoMap.set(w.id, w.linked_repository ?? w.repo ?? null);
     return all;
   }
 
-  const workspaceRepoMap = new Map<string, WorkspaceEntry["repo"]>();
+  const workspaceRepoMap = new Map<string, LinkedRepo | null>();
 
   async function getWorkspaceRepo(workspaceId: string) {
     if (!workspaceRepoMap.has(workspaceId)) await listAllWorkspaces();

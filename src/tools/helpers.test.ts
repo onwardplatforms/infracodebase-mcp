@@ -38,13 +38,15 @@ describe("createToolContext — listAllWorkspaces", () => {
       listWorkspaces: vi
         .fn()
         .mockRejectedValueOnce(new Error("402 payment_required"))
-        .mockResolvedValueOnce({ data: [{ id: "ws_2", repo: { owner: "acme", name: "infra" } }] }),
+        .mockResolvedValueOnce({
+          data: [{ id: "ws_2", linked_repository: { owner: "acme", name: "infra" } }],
+        }),
     });
     const tools = createToolContext(ctx);
     const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
 
     expect(await tools.listAllWorkspaces()).toEqual([
-      { id: "ws_2", enterprise_id: "ent_2", repo: { owner: "acme", name: "infra" } },
+      { id: "ws_2", enterprise_id: "ent_2", linked_repository: { owner: "acme", name: "infra" } },
     ]);
     expect(await tools.getEnterpriseForWorkspace("ws_2")).toBe("ent_2");
     expect(await tools.getWorkspaceRepo("ws_2")).toEqual({ owner: "acme", name: "infra" });

@@ -1,4 +1,8 @@
-import { parseRepoIdentity, type BranchDetection, type ResolvedRepo } from "../repo-detect.js";
+import {
+  parseRemoteRef,
+  type BranchDetection,
+  type ResolvedRepo,
+} from "../repo-detect.js";
 import type { ToolContext, ToolDef } from "./helpers.js";
 import { branchReport, detectWorkspaceBranch } from "./branch-report.js";
 
@@ -14,7 +18,7 @@ async function detectRepoBranch(
   explicit?: string
 ): Promise<BranchDetection> {
   if (repo.resolved_from === "argument")
-    return ctx.resolveBranch(explicit, { repo: parseRepoIdentity(repo.repo_url) });
+    return ctx.resolveBranch(explicit, { repo: repoFromUrl(repo.repo_url) });
   if (explicit) return { branch: explicit, resolved_from: "argument" };
   if (repo.branch) return { branch: repo.branch, resolved_from: repo.resolved_from };
   return { branch: null, reason: "no_checkout" };
@@ -68,3 +72,11 @@ export const getWorkspaceContext: ToolDef = {
     };
   },
 };
+
+/** The explicit repo_url as a LinkedRepo, so branch detection only accepts a checkout of that repo. */
+function repoFromUrl(repoUrl: string) {
+  const parsed = parseRemoteRef(repoUrl);
+  return parsed
+    ? { owner: parsed.owner, name: parsed.name, host: parsed.host, display_path: parsed.displayPath }
+    : null;
+}
