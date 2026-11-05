@@ -39,6 +39,11 @@ import { setupWorkspace } from "./setup_workspace.js";
 import { createWorkspace } from "./create_workspace.js";
 import { linkWorkspaceToRepo } from "./link_workspace_to_repo.js";
 import { updateWorkspaceResources } from "./update_workspace_resources.js";
+import {
+  bindLocalWorkspace,
+  createLocalWorkspace,
+  submitLocalComplianceSnapshot,
+} from "./local-workspace.js";
 
 /** Every tool registered on the server, in registration order. */
 export const TOOLS: ToolDef[] = [
@@ -72,6 +77,9 @@ export const TOOLS: ToolDef[] = [
   planWorkspaceSetup,
   setupWorkspace,
   createWorkspace,
+  createLocalWorkspace,
+  bindLocalWorkspace,
+  submitLocalComplianceSnapshot,
   linkWorkspaceToRepo,
   updateWorkspaceResources,
 ];

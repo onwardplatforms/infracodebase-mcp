@@ -235,6 +235,30 @@ export class InfracodebaseClient {
     });
   }
 
+  async bindLocalWorkspace(
+    enterpriseId: string,
+    workspaceId: string,
+    body: { binding_id: string; local_identity: string }
+  ) {
+    return this.request<unknown>(
+      "PUT",
+      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/local-binding`,
+      { body }
+    );
+  }
+
+  async submitLocalSnapshot(
+    enterpriseId: string,
+    workspaceId: string,
+    body: { binding_id: string; commit_sha: string; branch?: string; bundle_base64: string }
+  ) {
+    return this.request<unknown>(
+      "POST",
+      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/local-snapshots`,
+      { body, timeoutMs: 120_000 }
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // Ruleset operations
   // ---------------------------------------------------------------------------

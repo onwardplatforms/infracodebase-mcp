@@ -479,6 +479,26 @@ export const TOOL_SHAPES = {
     branch: branchToLink.optional(),
   },
 
+  create_local_workspace: {
+    enterprise_id: z.string().min(1).describe("Enterprise ID."),
+    name: z.string().min(1).describe("Workspace name."),
+    description: z.string().describe("Optional description.").optional(),
+    ruleset_ids: idList("Ruleset IDs to attach."),
+    directory: z.string().min(1).describe("Local Git folder. Defaults to the MCP server working directory.").optional(),
+  },
+
+  bind_local_workspace: {
+    workspace_id: z.string().min(1).describe("Existing local-Git workspace ID."),
+    directory: z.string().min(1).describe("Local Git folder. Defaults to the MCP server working directory.").optional(),
+    ...enterpriseHint,
+  },
+
+  submit_local_compliance_snapshot: {
+    workspace_id: z.string().min(1).describe("Bound local-Git workspace ID."),
+    directory: z.string().min(1).describe("Local Git folder. Defaults to the MCP server working directory.").optional(),
+    ...enterpriseHint,
+  },
+
   link_workspace_to_repo: {
     workspace_id: z.string().min(1).describe("Workspace ID."),
     connection_id: z
@@ -551,6 +571,12 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
     "Apply a plan from plan_workspace_setup after the user has confirmed it. Either creates a workspace (workspace_name + ruleset_ids) linked to the repo, or links the repo to an existing unlinked workspace (existing_workspace_id) and attaches ruleset_ids to it, then reloads the workspace context so you can write against the rules immediately. Check the result: repository_linked false means the workspace exists but the link failed (see repository_error); a `warning` means the link succeeded but the delivery webhook did not register, so pushes will NOT trigger compliance until the repo is re-linked. Relay both to the user; never report an unqualified success over them. Do not call this until the user has confirmed the plan.",
   create_workspace:
     "Create a workspace with optional rulesets, MCP servers, and workflows. For a repo that came back unlinked, prefer plan_workspace_setup + setup_workspace, which do the lookups below for you. Call list_enterprise_resources first. To also link a repo, pass connection_id + repo_path + branch (from list_vcs_connections / list_vcs_repos). A repo links to at most one workspace, so first confirm with list_workspaces that no workspace already owns this repo — if one does, attach rulesets to it with update_workspace_resources instead of creating a second workspace, since the link here would fail. This tool links an existing repo; it does not create one on the provider — the repo must already exist there (create it with the provider's CLI, e.g. gh or glab, if it doesn't). IMPORTANT: check `repository_linked` in the result whenever you request a link — false means the workspace exists but the link failed (see repository_error). A `warning` means the repo linked but its delivery webhook couldn't be registered, so pushes will NOT trigger compliance until it's re-linked — surface both to the user, never report an unqualified success over them.",
+  create_local_workspace:
+    "Create a local-Git workspace and bind it to the current Git repository in one action. It creates no remote repository and never uploads local source or a filesystem path. The project receives a non-secret .infracodebase/workspace.json marker; add it to .gitignore if you do not want it committed.",
+  bind_local_workspace:
+    "Bind an app-created local-Git workspace to the current local Git repository. It creates or refreshes a non-secret .infracodebase/workspace.json marker and stores only an opaque binding identifier with the platform. It does not create a remote repository or upload code.",
+  submit_local_compliance_snapshot:
+    "Submit the current committed local Git revision for compliance. This uploads a Git bundle as immutable evidence and starts the normal evaluator; uncommitted files are excluded. It does not create or require a remote repository. The result is an asynchronous evaluation: share its URL or use wait_for_compliance_evaluation only when the user asks to wait.",
   link_workspace_to_repo:
     "Link a workspace to a repo (any provider) for compliance evaluations on push. IMPORTANT: a `warning` in the result means the repo linked but its delivery webhook couldn't be registered, so pushes will NOT trigger compliance until it's re-linked — surface it to the user, never report an unqualified success over it.",
   update_workspace_resources:
@@ -623,6 +649,12 @@ export const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
     idempotent: false,
   }),
   create_workspace: writes("Create workspace", { destructive: false, idempotent: false }),
+  create_local_workspace: writes("Create local-Git workspace", { destructive: false, idempotent: false }),
+  bind_local_workspace: writes("Bind local-Git workspace", { destructive: false, idempotent: true }),
+  submit_local_compliance_snapshot: writes("Submit local compliance snapshot", {
+    destructive: false,
+    idempotent: false,
+  }),
   setup_workspace: writes("Set up workspace", { destructive: false, idempotent: false }),
   // Replaces an existing repo link.
   link_workspace_to_repo: writes("Link workspace to repository", {
