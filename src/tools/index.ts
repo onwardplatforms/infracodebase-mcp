@@ -32,6 +32,8 @@ import { rejectComplianceException } from "./reject_compliance_exception.js";
 import { revokeComplianceException } from "./revoke_compliance_exception.js";
 import { listEnterpriseResources } from "./list_enterprise_resources.js";
 import { listModules } from "./list_modules.js";
+import { listWorkspaceModules } from "./list_workspace_modules.js";
+import { listModuleConsumers } from "./list_module_consumers.js";
 import { listVcsConnections } from "./list_vcs_connections.js";
 import { listVcsRepos } from "./list_vcs_repos.js";
 import { planWorkspaceSetup } from "./plan_workspace_setup.js";
@@ -65,6 +67,8 @@ export const TOOLS: ToolDef[] = [
   // Enterprise resources
   listEnterpriseResources,
   listModules,
+  listWorkspaceModules,
+  listModuleConsumers,
   // Version control
   listVcsConnections,
   listVcsRepos,

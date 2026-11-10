@@ -57,7 +57,7 @@ A few terms show up throughout the tools.
 
 ## Tools
 
-The server gives your agent 25 tools, grouped into seven areas. Your saved session is loaded and refreshed locally, so credentials never appear in tool arguments or MCP configuration. When in doubt, start with `get_workspace_context`. Called with no arguments it detects the repo from the client's workspace root or the directory the server was started in, and tells the agent everything it needs to know about that repo. Read-only tools are annotated as such, so clients that honor MCP annotations can run them without a permission prompt.
+The server gives your agent 27 tools, grouped into seven areas. Your saved session is loaded and refreshed locally, so credentials never appear in tool arguments or MCP configuration. When in doubt, start with `get_workspace_context`. Called with no arguments it detects the repo from the client's workspace root or the directory the server was started in, and tells the agent everything it needs to know about that repo. Read-only tools are annotated as such, so clients that honor MCP annotations can run them without a permission prompt.
 
 ### Workspace
 
@@ -103,6 +103,10 @@ For failing rules the code can't or shouldn't fix. An exception is either a **ri
 | --- | --- | --- |
 | `list_enterprise_resources` | See the rulesets, MCP servers, and workflows an enterprise offers. | `enterprise_id` |
 | `list_modules` | See the approved, reusable infrastructure modules, with their source and version. | `enterprise_id` |
+| `list_workspace_modules` | Read stored default-branch module references, versions, freshness, locations and scan metadata. No scan is started. | `workspace_id`, `enterprise_id?`, `status?`, `query?`, `limit?`, `cursor?` |
+| `list_module_consumers` | See accessible workspaces that reference an approved module, with versions, locations and scan metadata. | `module_id`, `enterprise_id?`, `status?`, `query?`, `limit?`, `cursor?` |
+
+Module inventory tools return one call site per result, including local sources. Local sources have no independent version pin. Follow `next_cursor` until it is null, even if a filtered page is empty. Missing, stale or incomplete scans are not proof that no references exist. The consumer view covers observed, accessible workspaces, not every repository. Latest stable is not a compatibility verdict. These reads never run compliance, install dependencies, refresh scans or start upgrades.
 
 ### Setup
 

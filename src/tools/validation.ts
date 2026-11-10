@@ -75,6 +75,14 @@ const enterpriseHint = {
     .optional(),
 };
 
+const moduleInventoryPage = {
+  ...enterpriseHint,
+  limit: z.number().int().min(1).max(100).optional().describe("References per page, 1-100. Default 50."),
+  cursor: z.string().min(1).max(2000).optional().describe("Opaque next_cursor from the previous page. Keep the same target and filters."),
+  status: z.enum(["all", "updates", "current", "unassessed"]).optional().describe("Default all. Freshness only, not upgrade compatibility."),
+  query: z.string().max(200).optional().describe("Search module or consumer names, versions, source addresses and paths."),
+};
+
 const repoPath = (suffix: string) =>
   z
     .string()
@@ -394,6 +402,9 @@ export const TOOL_SHAPES = {
     enterprise_id: z.string().min(1).describe("Enterprise ID from list_enterprises."),
   },
 
+  list_workspace_modules: {...moduleInventoryPage, workspace_id: z.string().min(1).describe("Workspace ID from get_workspace_context or list_workspaces.")},
+  list_module_consumers: {...moduleInventoryPage, module_id: z.string().min(1).describe("Module workspace ID returned by list_modules.")},
+
   list_vcs_connections: {
     enterprise_id: z.string().min(1).describe("Enterprise ID."),
     provider: z
@@ -505,6 +516,8 @@ export const TOOL_SHAPES = {
 export type ToolName = keyof typeof TOOL_SHAPES;
 
 export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
+  list_workspace_modules: "Read stored module references on a workspace's default branch. Returns call sites, declared and latest stable versions, freshness, and scan metadata. Follow next_cursor, including on empty filtered pages. Never starts scans, compliance, installs or upgrades. Missing, stale or incomplete scans do not prove absence. Local sources have no independent version pin. Latest stable does not establish compatibility.",
+  list_module_consumers: "Read stored references to an approved module from accessible consumer workspaces. Pass a module workspace ID from list_modules. Returns versions, freshness, call sites and per-consumer scan metadata. Follow next_cursor, including on empty filtered pages. This observed inventory is not an exhaustive search of every repository. Never starts scans, compliance, installs or upgrades.",
   list_enterprises:
     "List enterprises the caller belongs to. Use this to find an enterprise_id for list_workspaces. Each row's workspace_count only counts STANDARD-kind workspaces — pass kinds: ['STANDARD','TEMPLATE','MODULE'] on list_workspaces if that number doesn't match what you see there.",
   list_workspaces:
@@ -596,6 +609,8 @@ export const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
   list_compliance_exceptions: readOnly("List compliance exceptions"),
   list_enterprise_resources: readOnly("List enterprise resources"),
   list_modules: readOnly("List approved modules"),
+  list_workspace_modules: readOnly("List workspace module references"),
+  list_module_consumers: readOnly("List module consumers"),
   list_vcs_connections: readOnly("List version-control connections"),
   list_vcs_repos: readOnly("List repositories"),
   plan_workspace_setup: readOnly("Plan workspace setup"),

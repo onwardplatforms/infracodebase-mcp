@@ -38,6 +38,13 @@ export interface Identity {
  */
 export const WORKSPACE_PAGE_LIMIT = 100;
 
+export interface ModuleInventoryOptions {
+  limit?: number;
+  cursor?: string;
+  status?: "all" | "updates" | "current" | "unassessed";
+  query?: string;
+}
+
 export class InfracodebaseClient {
   private baseUrl: string;
   private getAccessToken: AccessTokenProvider;
@@ -413,6 +420,38 @@ export class InfracodebaseClient {
 
   async listModules(enterpriseId: string) {
     return this.request<unknown>("GET", `/enterprises/${enterpriseId}/modules`);
+  }
+
+  async listWorkspaceModules(
+    enterpriseId: string,
+    workspaceId: string,
+    options: ModuleInventoryOptions = {},
+  ) {
+    return this.readModuleInventory(enterpriseId, workspaceId, "modules", options);
+  }
+
+  async listModuleConsumers(
+    enterpriseId: string,
+    moduleId: string,
+    options: ModuleInventoryOptions = {},
+  ) {
+    return this.readModuleInventory(enterpriseId, moduleId, "module-consumers", options);
+  }
+
+  private readModuleInventory(
+    enterpriseId: string,
+    workspaceId: string,
+    resource: "modules" | "module-consumers",
+    options: ModuleInventoryOptions,
+  ) {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(options)) {
+      if (value !== undefined) query.set(key, String(value));
+    }
+    return this.request<unknown>(
+      "GET",
+      `/enterprises/${encodeURIComponent(enterpriseId)}/workspaces/${encodeURIComponent(workspaceId)}/${resource}${query.size ? `?${query}` : ""}`,
+    );
   }
 
   // ---------------------------------------------------------------------------
