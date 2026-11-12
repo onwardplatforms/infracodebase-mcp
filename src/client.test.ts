@@ -167,6 +167,21 @@ describe("InfracodebaseClient — request plumbing", () => {
     expect(init.body).toBe(JSON.stringify({ name: "infra" }));
   });
 
+  it("creates a repository through a connection with a POST to its repos collection", async () => {
+    const fetchMock = stubFetch(jsonResponse({ path: "acme/svc", clone_url: "https://x/acme/svc.git" }));
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+
+    const out = await client.createVcsRepository("ent_1", "conn_1", { name: "svc", visibility: "private" });
+
+    const { url, init } = lastCall(fetchMock);
+    expect(url).toBe(
+      "https://api.example.com/enterprises/ent_1/integrations/vcs/connections/conn_1/repos"
+    );
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ name: "svc", visibility: "private" }));
+    expect(out.clone_url).toBe("https://x/acme/svc.git");
+  });
+
   it("returns the parsed JSON body on a 2xx", async () => {
     stubFetch(jsonResponse({ data: [{ id: "ent_1" }] }));
     const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });

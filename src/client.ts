@@ -45,6 +45,19 @@ export interface ModuleInventoryOptions {
   query?: string;
 }
 
+/** Shape of POST .../integrations/vcs/connections/{id}/repos. */
+export interface CreatedVcsRepository {
+  provider: string;
+  /** Full provider path; pass it verbatim as repo_path when linking. */
+  path: string;
+  name: string;
+  default_branch: string;
+  visibility: string;
+  web_url: string;
+  /** What to `git remote add origin`. */
+  clone_url: string;
+}
+
 export class InfracodebaseClient {
   private baseUrl: string;
   private getAccessToken: AccessTokenProvider;
@@ -478,6 +491,21 @@ export class InfracodebaseClient {
     return this.request<unknown>("GET", path);
   }
 
+  /** Create a repository on a connection's provider as the signed-in person
+   *  (their own connected account, never the enterprise connection). The
+   *  server refuses providers without a personal connect flow. */
+  async createVcsRepository(
+    enterpriseId: string,
+    connectionId: string,
+    body: { name: string; description?: string; visibility?: string; project?: string }
+  ) {
+    return this.request<CreatedVcsRepository>(
+      "POST",
+      `/enterprises/${enterpriseId}/integrations/vcs/connections/${connectionId}/repos`,
+      { body }
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // Repository operations
   // ---------------------------------------------------------------------------
@@ -618,6 +646,13 @@ function hintFor(
       : `This token is read-only. Creating or linking workspaces and attaching rulesets need a "Read and write" token from ${origin}/settings/tokens; ask the user to create one and update INFRACODEBASE_TOKEN.`;
   }
   if (status === 429) return "Rate limited. Wait before retrying.";
+  if (status >= 500) {
+    return (
+      "The server failed before answering. Quote the request_id to support. If this call created " +
+      "something (a repository, a workspace), check whether it exists before retrying, so the retry " +
+      "links it instead of creating it again."
+    );
+  }
   return null;
 }
 

@@ -64,22 +64,77 @@ export interface RepoDetectDeps {
 
 const GIT_TIMEOUT_MS = 3000;
 
-function git(args: string[]): Promise<string | null> {
+/**
+ * Detection could not run at all: git is not installed, it timed out, or it
+ * refused the directory (dubious ownership in a container or a shared
+ * checkout). Distinct from "ran and found nothing", because the two call for
+ * opposite answers: the former needs a repo_url from the user, the latter
+ * means a repository has to be created.
+ */
+export class RepoDetectionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RepoDetectionError";
+  }
+}
+
+/** Git ran everywhere it was asked and none of those directories has a remote. */
+export class NoRemoteError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NoRemoteError";
+  }
+}
+
+/** The result of one git command: its trimmed stdout, or why it gave none. */
+interface GitResult {
+  out: string | null;
+  /** Set when git did not get to answer, as opposed to answering "no". */
+  failure?: string;
+}
+
+function run(args: string[]): Promise<GitResult> {
   return new Promise((resolve) => {
-    execFile("git", args, { timeout: GIT_TIMEOUT_MS }, (err, stdout) => {
+    execFile("git", args, { timeout: GIT_TIMEOUT_MS }, (err, stdout, stderr) => {
       if (err) {
         // A non-zero exit is an ordinary "no" (not a repo, no upstream). A
-        // spawn failure or timeout is not, so say so rather than letting it
-        // read as a detached HEAD or a missing remote.
+        // spawn failure, a timeout, or git refusing the directory is not, so
+        // say so rather than letting it read as a detached HEAD or a missing
+        // remote.
+        const refused = /dubious ownership/i.test(String(stderr));
         const spawnFailure = (err as NodeJS.ErrnoException).code === "ENOENT" || err.killed;
-        if (spawnFailure)
-          console.error(`[infracodebase-mcp] git ${args.slice(2).join(" ")} failed: ${err.message}`);
-        resolve(null);
+        if (spawnFailure || refused) {
+          const detail = refused ? String(stderr).trim() : err.message;
+          console.error(`[infracodebase-mcp] git ${args.slice(2).join(" ")} failed: ${detail}`);
+          resolve({ out: null, failure: detail });
+          return;
+        }
+        resolve({ out: null });
         return;
       }
-      resolve(String(stdout).trim() || null);
+      resolve({ out: String(stdout).trim() || null });
     });
   });
+}
+
+/** Stdout of a git command, or null for any kind of "no". Branch detection
+ *  degrades on a failure (no branch is a safe answer there). */
+async function git(args: string[]): Promise<string | null> {
+  return (await run(args)).out;
+}
+
+/** Like `git`, but a failure to run is thrown as a RepoDetectionError. Remote
+ *  detection must not degrade: a missing remote means "create a repository",
+ *  which is the wrong answer when git simply could not look. */
+async function gitStrict(args: string[]): Promise<string | null> {
+  const result = await run(args);
+  if (result.failure !== undefined) {
+    throw new RepoDetectionError(
+      `Could not run git to detect the repository (${result.failure}). Pass repo_url (the output ` +
+        "of `git remote get-url origin`) or workspace_id."
+    );
+  }
+  return result.out;
 }
 
 /** The remote a checkout is identified by: `origin` when it has one, else the first `git remote` lists (alphabetical). */
@@ -89,16 +144,17 @@ function pickRemote(remotes: string[]): string | null {
 
 /** The repo's remotes; null when `git remote` itself failed, which is not the same as having none. */
 async function listRemotes(dir: string): Promise<string[] | null> {
-  const out = await git(["-C", dir, "remote"]);
+  const out = await gitStrict(["-C", dir, "remote"]);
   return out === null ? null : out.split("\n").map((r) => r.trim()).filter(Boolean);
 }
 
-/** The URL of the remote `pickRemote` chooses: `origin` first, else the first `git remote` lists. */
+/** The URL of the remote `pickRemote` chooses: `origin` first, else the first
+ *  `git remote` lists. Throws RepoDetectionError when git could not look. */
 export async function gitRemoteUrl(dir: string): Promise<string | null> {
-  const origin = await git(["-C", dir, "remote", "get-url", "origin"]);
+  const origin = await gitStrict(["-C", dir, "remote", "get-url", "origin"]);
   if (origin) return origin;
   const first = pickRemote((await listRemotes(dir)) ?? []);
-  return first ? git(["-C", dir, "remote", "get-url", first]) : null;
+  return first ? gitStrict(["-C", dir, "remote", "get-url", first]) : null;
 }
 
 /** A repo identity as the platform stores it: full provider path, split into owner and name. */
@@ -258,7 +314,7 @@ export function createRepoResolver(deps: RepoDetectDeps) {
     if (cwdUrl) return withBranch(cwd, { repo_url: sanitizeRepoUrl(cwdUrl), resolved_from: "cwd" });
 
     const checked = [...rootDirs, cwd].join(", ");
-    throw new Error(
+    throw new NoRemoteError(
       `Could not detect a git remote (checked: ${checked}). ` +
         `Pass repo_url (the output of \`git remote get-url origin\`) or workspace_id.`
     );
