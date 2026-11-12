@@ -163,3 +163,124 @@ describe("setup_workspace — cache", () => {
     expect(ctx.forgetWorkspaceRepo).toHaveBeenCalledWith("ws_free");
   });
 });
+
+describe("setup_workspace — create the repository first", () => {
+  const created = {
+    provider: "github",
+    path: "acme/platform-network",
+    name: "platform-network",
+    default_branch: "main",
+    visibility: "private",
+    web_url: "https://github.com/acme/platform-network",
+    clone_url: "https://github.com/acme/platform-network.git",
+  };
+
+  it("creates the repo as the user, links its default branch, and says how to add the remote", async () => {
+    const client = mockClient({
+      createVcsRepository: vi.fn().mockResolvedValue(created),
+      createWorkspace: vi.fn().mockResolvedValue({
+        workspace: { id: "ws_new" },
+        repository_linked: true,
+      }),
+      resolveWorkspaceContext: vi.fn().mockResolvedValue({ status: "linked" }),
+    });
+
+    const result = (await setupWorkspace.run(mockContext({ client }), {
+      enterprise_id: "ent_1",
+      connection_id: "conn_1",
+      create_repo: true,
+      repo_name: "platform-network",
+      visibility: "private",
+      repo_description: "Network baseline",
+      workspace_name: "platform-network",
+      ruleset_ids: ["rs_req"],
+    })) as any;
+
+    expect(client.createVcsRepository).toHaveBeenCalledWith("ent_1", "conn_1", {
+      name: "platform-network",
+      description: "Network baseline",
+      visibility: "private",
+    });
+    // The link uses what the provider reported, not anything the agent guessed.
+    expect(client.createWorkspace).toHaveBeenCalledWith(
+      "ent_1",
+      expect.objectContaining({
+        repository: { connection_id: "conn_1", path: "acme/platform-network", branch: "main" },
+      })
+    );
+    expect(result.status).toBe("linked");
+    expect(result.repository).toEqual(created);
+    expect(result.next).toContain(
+      "git remote add origin https://github.com/acme/platform-network.git && git pull --rebase origin main"
+    );
+    expect(result.next).toContain("trigger_compliance_evaluation");
+  });
+
+  it("can create the repo for an existing unlinked workspace", async () => {
+    const client = mockClient({
+      createVcsRepository: vi.fn().mockResolvedValue(created),
+      linkWorkspaceToRepo: vi.fn().mockResolvedValue({}),
+      resolveWorkspaceContext: vi.fn().mockResolvedValue({ status: "linked" }),
+    });
+
+    const result = (await setupWorkspace.run(mockContext({ client }), {
+      enterprise_id: "ent_1",
+      connection_id: "conn_1",
+      create_repo: true,
+      repo_name: "platform-network",
+      existing_workspace_id: "ws_free",
+    })) as any;
+
+    expect(client.linkWorkspaceToRepo).toHaveBeenCalledWith("ent_1", "ws_free", {
+      connection_id: "conn_1",
+      path: "acme/platform-network",
+      branch: "main",
+    });
+    expect(result.repository.clone_url).toBe(created.clone_url);
+  });
+
+  it("refuses create_repo without a repo_name before touching anything", async () => {
+    const client = mockClient();
+
+    await expect(
+      setupWorkspace.run(mockContext({ client }), {
+        enterprise_id: "ent_1",
+        connection_id: "conn_1",
+        create_repo: true,
+        workspace_name: "x",
+      })
+    ).rejects.toThrow(/repo_name/);
+    expect(client.createVcsRepository).not.toHaveBeenCalled();
+  });
+
+  it("refuses a link without repo_path and branch when no repo is being created", async () => {
+    const client = mockClient();
+
+    await expect(
+      setupWorkspace.run(mockContext({ client }), {
+        enterprise_id: "ent_1",
+        connection_id: "conn_1",
+        workspace_name: "x",
+      })
+    ).rejects.toThrow(/repo_path and branch/);
+    expect(client.createWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("lets the server's refusal through untouched when the provider cannot create as the user", async () => {
+    const refusal = new Error(
+      "infracodebase cannot create repositories on GitLab as you yet, and it never creates them with the enterprise connection."
+    );
+    const client = mockClient({ createVcsRepository: vi.fn().mockRejectedValue(refusal) });
+
+    await expect(
+      setupWorkspace.run(mockContext({ client }), {
+        enterprise_id: "ent_1",
+        connection_id: "conn_gl",
+        create_repo: true,
+        repo_name: "svc",
+        workspace_name: "svc",
+      })
+    ).rejects.toBe(refusal);
+    expect(client.createWorkspace).not.toHaveBeenCalled();
+  });
+});

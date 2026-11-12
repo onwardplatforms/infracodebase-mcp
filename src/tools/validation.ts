@@ -441,19 +441,54 @@ export const TOOL_SHAPES = {
         "Optional. Only consider this version-control connection (use after a needs_decision result)."
       )
       .optional(),
+    repo_name: z
+      .string()
+      .min(1)
+      .describe(
+        "Optional. The name for a repository that does not exist yet (no git remote here, or " +
+          "repo_not_found). Lets the plan propose creating it instead of asking for the name."
+      )
+      .optional(),
   },
 
   setup_workspace: {
     enterprise_id: z.string().min(1).describe("Enterprise ID from the plan."),
     connection_id: z.string().min(1).describe("Version-control connection ID from the plan."),
-    repo_path: repoPath(" from the plan (repo.path)"),
+    repo_path: repoPath(" from the plan (repo.path). Omit with create_repo").optional(),
     branch: z
       .string()
       .min(1)
       .describe(
         "Branch to link: the plan's repo.default_branch unless the user chose another. " +
-          "Must already exist on the remote."
-      ),
+          "Must already exist on the remote. Omit with create_repo: the new repository's " +
+          "default branch is linked."
+      )
+      .optional(),
+    create_repo: z
+      .boolean()
+      .describe(
+        "Create the repository first, on the connection's provider, as the user with their own " +
+          "connected account (never the enterprise connection), then link it. Only when the plan's " +
+          "target has repository_creation `available`; the server refuses other providers and " +
+          "says what to do instead. Requires repo_name."
+      )
+      .optional(),
+    repo_name: z
+      .string()
+      .min(1)
+      .describe("With create_repo: the name of the repository to create (a name, not a path).")
+      .optional(),
+    repo_description: z
+      .string()
+      .describe("With create_repo: optional description for the new repository.")
+      .optional(),
+    visibility: z
+      .enum(["private", "internal", "public"])
+      .describe(
+        "With create_repo: the repository's visibility, one of the target's allowed_visibilities. " +
+          "Defaults to private."
+      )
+      .optional(),
     workspace_name: z
       .string()
       .min(1)
@@ -555,15 +590,15 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   list_modules:
     "Discover approved company modules before writing or extending infrastructure. Each module includes source_url (underlying VCS repository), registry_source, source_kind, and versions. Versions are the Git tags in the module's own repository, with their recorded commits; latest_version is the highest stable semantic version. Write the source that source_kind names: for a registry source use registry_source and drop a leading v from the tag for version; for a Git source use source_url with the exact tag as the ref. Do not substitute the VCS URL for a linked registry module, and do not invent a version. Before using inputs and outputs, read the exact chosen version from the repository at that tag or its registry entry, never main. Check versions_status before choosing a version: only ok is a complete list; syncing, stale and error are not empty catalogs. Catalog queries read stored data and never refresh upstream, so do not repeatedly poll; last_synced_at reports freshness. Versions include historical tags even if they disappear upstream; version_revisions records tag-to-commit bindings, so use the recorded commit when inspecting a historical version.",
   list_vcs_connections:
-    "Return the version-control connections (GitHub, GitLab, …) configured for an enterprise, each with its provider, host, and account. Use a connection's id with list_vcs_repos and when linking a repo.",
+    "Return the version-control connections (GitHub, GitLab, …) configured for an enterprise, each with its provider, host, account, the repository visibilities the enterprise allows there, and `repository_creation`: whether you can create a repository through it (available), or the one reason you cannot (connect_github_account, not_permitted, unsupported_provider, user_context_required). Repositories are only ever created as the user with their own connected account, never with the enterprise connection, so a provider without that flow is unsupported_provider: the user creates the repo there and links it. Use a connection's id with list_vcs_repos and when linking a repo.",
   list_vcs_repos:
     "Return repositories accessible via a version-control connection — same shape for every provider. Each repo's `path` is the full provider path (GitLab subgroups included); pass it verbatim as repo_path when linking.",
   plan_workspace_setup:
-    "Read-only. Works out everything needed to bring an unlinked repo under governance in one call: resolves the repo (auto-detected when repo_url is omitted), finds the enterprise and version-control connection that can see it, checks for a workspace that already owns it, lists unlinked workspaces the repo could join, and lists the enterprise's rulesets with the required ones pre-selected. Makes no changes. `status` is ready (a `proposed` plan plus `decisions_needed`), needs_decision (several enterprises or connections can see the repo: ask the user, then call again with enterprise_id and connection_id), repo_not_found (no connection can see the repo: it may not exist yet, or the connection lacks access), or already_linked. Show the user the plan and get their answer to each decision before calling setup_workspace.",
+    "Read-only. Works out everything needed to bring a repo under governance in one call: resolves the repo (auto-detected when repo_url is omitted), finds the enterprise and version-control connection that can see it, checks for a workspace that already owns it, lists unlinked workspaces the repo could join, and lists the enterprise's rulesets with the required ones pre-selected. Makes no changes. `status` is ready (a `proposed` plan plus `decisions_needed`), needs_decision (several enterprises or connections can see the repo: ask the user, then call again with enterprise_id and connection_id), already_linked, or one of two 'the repo does not exist yet' answers: no_remote (this directory has no git remote) and repo_not_found (no connection can see the repo). Both carry `targets`: every connected account the repository could be created under, each with `repository_creation` and a `create` instruction. A target marked available is one infracodebase can create itself, as the user, through setup_workspace with create_repo; any other target tells you what the user must do first (connect their GitHub account, or create the repo in the provider with their own credentials and push). Repositories are never created with the enterprise connection. One target settles the choice; several become a `target` decision: ask, then call again with enterprise_id, connection_id, and repo_name. Show the user the plan and get their answer to each decision before calling setup_workspace.",
   setup_workspace:
-    "Apply a plan from plan_workspace_setup after the user has confirmed it. Either creates a workspace (workspace_name + ruleset_ids) linked to the repo, or links the repo to an existing unlinked workspace (existing_workspace_id) and attaches ruleset_ids to it, then reloads the workspace context so you can write against the rules immediately. Check the result: repository_linked false means the workspace exists but the link failed (see repository_error); a `warning` means the link succeeded but the delivery webhook did not register, so pushes will NOT trigger compliance until the repo is re-linked. Relay both to the user; never report an unqualified success over them. Do not call this until the user has confirmed the plan.",
+    "Apply a plan from plan_workspace_setup after the user has confirmed it. Either creates a workspace (workspace_name + ruleset_ids) linked to the repo, or links the repo to an existing unlinked workspace (existing_workspace_id) and attaches ruleset_ids to it, then reloads the workspace context so you can write against the rules immediately. With create_repo (plus repo_name, and optionally visibility and repo_description) it first creates the repository on the plan's connection as the user, with their own connected account, then links its default branch; the result's `repository` carries the clone_url, and `next` says how to point the local checkout at it. Only for a target whose repository_creation is available: the server refuses other providers and names the fix. Check the result: repository_linked false means the workspace exists but the link failed (see repository_error); a `warning` means the link succeeded but the delivery webhook did not register, so pushes will NOT trigger compliance until the repo is re-linked. Relay both to the user; never report an unqualified success over them. Do not call this until the user has confirmed the plan.",
   create_workspace:
-    "Create a workspace with optional rulesets, MCP servers, and workflows. For a repo that came back unlinked, prefer plan_workspace_setup + setup_workspace, which do the lookups below for you. Call list_enterprise_resources first. To also link a repo, pass connection_id + repo_path + branch (from list_vcs_connections / list_vcs_repos). A repo links to at most one workspace, so first confirm with list_workspaces that no workspace already owns this repo — if one does, attach rulesets to it with update_workspace_resources instead of creating a second workspace, since the link here would fail. This tool links an existing repo; it does not create one on the provider — the repo must already exist there (create it with the provider's CLI, e.g. gh or glab, if it doesn't). IMPORTANT: check `repository_linked` in the result whenever you request a link — false means the workspace exists but the link failed (see repository_error). A `warning` means the repo linked but its delivery webhook couldn't be registered, so pushes will NOT trigger compliance until it's re-linked — surface both to the user, never report an unqualified success over them.",
+    "Create a workspace with optional rulesets, MCP servers, and workflows. For a repo that came back unlinked, prefer plan_workspace_setup + setup_workspace, which do the lookups below for you. Call list_enterprise_resources first. To also link a repo, pass connection_id + repo_path + branch (from list_vcs_connections / list_vcs_repos). A repo links to at most one workspace, so first confirm with list_workspaces that no workspace already owns this repo — if one does, attach rulesets to it with update_workspace_resources instead of creating a second workspace, since the link here would fail. This tool links an existing repo; it does not create one on the provider. For a repo that does not exist yet, use plan_workspace_setup: it says which connected accounts could hold it and whether setup_workspace can create it there as the user (GitHub with their own connected account) or whether the user must create it with their own provider credentials first. IMPORTANT: check `repository_linked` in the result whenever you request a link — false means the workspace exists but the link failed (see repository_error). A `warning` means the repo linked but its delivery webhook couldn't be registered, so pushes will NOT trigger compliance until it's re-linked — surface both to the user, never report an unqualified success over them.",
   link_workspace_to_repo:
     "Link a workspace to a repo (any provider) for compliance evaluations on push. IMPORTANT: a `warning` in the result means the repo linked but its delivery webhook couldn't be registered, so pushes will NOT trigger compliance until it's re-linked — surface it to the user, never report an unqualified success over it.",
   update_workspace_resources:

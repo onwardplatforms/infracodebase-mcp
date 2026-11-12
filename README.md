@@ -112,16 +112,18 @@ Module inventory tools return one call site per result, including local sources.
 
 The two-call path for a repo that comes back `unlinked`. Drafting does not wait on it, since the unlinked answer already carries the enterprise's rules, but pushes are not checked until the repo is linked. The plan is read-only and lists the decisions that are yours; the apply step runs only after you confirm.
 
+When the repository does not exist yet (an empty directory, or a remote nobody can see), the plan lists the connected accounts it could live under. Repositories are only ever created as you, with your own connected account, never with the enterprise connection. On GitHub, once your account is connected, `setup_workspace` creates the repository and links it in one go and hands back the clone URL. On GitLab, Azure DevOps, and Bitbucket the plan tells the agent to have you create it with your own credentials first (it names the command) and to link it afterwards, until those providers get a personal connect flow.
+
 | Tool | What it does | Key inputs |
 | --- | --- | --- |
-| `plan_workspace_setup` | Finds the enterprise and connection that can see the repo, checks for an existing workspace, and proposes a workspace, branch, and rulesets (required ones pre-selected). Makes no changes. | `repo_url?`, `enterprise_id?`, `connection_id?` |
-| `setup_workspace` | Applies a confirmed plan: creates and links the workspace (or links an existing unlinked one), attaches rulesets, and reloads the context so the agent can write against the rules right away. | `enterprise_id`, `connection_id`, `repo_path`, `branch`, `workspace_name?` or `existing_workspace_id?`, `ruleset_ids?` |
+| `plan_workspace_setup` | Finds the enterprise and connection that can see the repo, checks for an existing workspace, and proposes a workspace, branch, and rulesets (required ones pre-selected). For a repo that does not exist yet, lists the connected accounts it could be created under and whether infracodebase can create it there as you. Makes no changes. | `repo_url?`, `enterprise_id?`, `connection_id?`, `repo_name?` |
+| `setup_workspace` | Applies a confirmed plan: creates and links the workspace (or links an existing unlinked one), attaches rulesets, and reloads the context so the agent can write against the rules right away. With `create_repo`, first creates the repository on GitHub with your own connected account. | `enterprise_id`, `connection_id`, `repo_path` + `branch` or `create_repo` + `repo_name`, `workspace_name?` or `existing_workspace_id?`, `ruleset_ids?` |
 
 ### Version control and manual setup
 
 | Tool | What it does | Key inputs |
 | --- | --- | --- |
-| `list_vcs_connections` | See the version-control connections (GitHub, GitLab, ...) an enterprise has. | `enterprise_id`, `provider?` |
+| `list_vcs_connections` | See the version-control connections (GitHub, GitLab, ...) an enterprise has, each saying whether you can create a repository through it. | `enterprise_id`, `provider?` |
 | `list_vcs_repos` | See the repos a version-control connection can reach. | `enterprise_id`, `connection_id`, `search?` |
 | `create_workspace` | Create a workspace, and optionally attach rules and link a repo. | `enterprise_id`, `name`, resource and repo fields (optional) |
 | `link_workspace_to_repo` | Connect a workspace to a repo (any provider) so every push gets checked. | `workspace_id`, `connection_id`, `repo_path`, `branch` |

@@ -45,6 +45,19 @@ export interface ModuleInventoryOptions {
   query?: string;
 }
 
+/** Shape of POST .../integrations/vcs/connections/{id}/repos. */
+export interface CreatedVcsRepository {
+  provider: string;
+  /** Full provider path; pass it verbatim as repo_path when linking. */
+  path: string;
+  name: string;
+  default_branch: string;
+  visibility: string;
+  web_url: string;
+  /** What to `git remote add origin`. */
+  clone_url: string;
+}
+
 export class InfracodebaseClient {
   private baseUrl: string;
   private getAccessToken: AccessTokenProvider;
@@ -476,6 +489,21 @@ export class InfracodebaseClient {
       `/enterprises/${enterpriseId}/integrations/vcs/connections/${connectionId}/repos` + query;
 
     return this.request<unknown>("GET", path);
+  }
+
+  /** Create a repository on a connection's provider as the signed-in person
+   *  (their own connected account, never the enterprise connection). The
+   *  server refuses providers without a personal connect flow. */
+  async createVcsRepository(
+    enterpriseId: string,
+    connectionId: string,
+    body: { name: string; description?: string; visibility?: string; project?: string }
+  ) {
+    return this.request<CreatedVcsRepository>(
+      "POST",
+      `/enterprises/${enterpriseId}/integrations/vcs/connections/${connectionId}/repos`,
+      { body }
+    );
   }
 
   // ---------------------------------------------------------------------------
