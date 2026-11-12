@@ -1,4 +1,5 @@
-import type { InfracodebaseClient } from "../client.js";
+import { ApiError, type InfracodebaseClient } from "../client.js";
+import { NoRemoteError } from "../repo-detect.js";
 import type { ToolDef } from "./helpers.js";
 
 /**
@@ -24,12 +25,25 @@ interface Enterprise {
   name?: string;
   slug?: string;
 }
-type CreationStatus =
-  | "available"
-  | "connect_github_account"
-  | "not_permitted"
-  | "unsupported_provider"
-  | "user_context_required";
+/**
+ * The API's `repository_creation` values this version understands. A value
+ * outside this list comes from a newer server and is reported as such rather
+ * than guessed at; an absent value comes from an older server.
+ */
+const CREATION_STATUSES = [
+  "available",
+  "connect_personal_account",
+  "personal_account_mismatch",
+  "insufficient_scope",
+  "not_permitted",
+  "unsupported_provider",
+  "user_context_required",
+] as const;
+type CreationStatus = (typeof CREATION_STATUSES)[number];
+const isCreationStatus = (value: unknown): value is CreationStatus =>
+  typeof value === "string" && (CREATION_STATUSES as readonly string[]).includes(value);
+/** Why creation through infracodebase is off the table for a target that is not `available`. */
+type BlockedReason = Exclude<CreationStatus, "available"> | "server_too_old" | "unknown_status";
 interface Connection {
   id: string;
   provider?: string;
@@ -37,7 +51,7 @@ interface Connection {
   account?: string;
   account_type?: string | null;
   /** Absent on a server that predates repository creation through the API. */
-  repository_creation?: CreationStatus;
+  repository_creation?: string;
   allowed_visibilities?: string[];
 }
 interface VcsRepo {
@@ -72,7 +86,7 @@ interface Match {
   connection: Connection;
   repo: VcsRepo;
 }
-interface Target {
+interface TargetBase {
   enterprise_id: string;
   enterprise?: string;
   connection_id: string;
@@ -80,14 +94,30 @@ interface Target {
   host?: string;
   account?: string;
   account_type?: string | null;
-  repository_creation: CreationStatus;
   allowed_visibilities: string[];
-  create:
-    | { how: "setup_workspace"; instructions: string }
-    | { how: "provider"; command?: string; instructions: string };
 }
+/**
+ * A connected account the repository could live under. The status and the
+ * instruction are one fact seen two ways, so the type ties them: only an
+ * `available` target routes to setup_workspace, every other one to the
+ * provider.
+ */
+type Target = TargetBase &
+  (
+    | { repository_creation: "available"; create: { how: "setup_workspace"; instructions: string } }
+    | {
+        repository_creation: BlockedReason;
+        create: { how: "provider"; command?: string; instructions: string };
+      }
+  );
 interface Decision {
-  decision: string;
+  decision:
+    | "workspace"
+    | "rulesets"
+    | "branch"
+    | "target"
+    | "repository_name"
+    | "visibility";
   question: string;
   options: unknown[];
 }
@@ -109,9 +139,8 @@ const providerLabel = (provider?: string) =>
  * own provider credentials, for the providers that have a CLI. Bitbucket has
  * no first-party CLI, so it gets prose instead of a command.
  */
-function localCreateCommand(connection: Connection, name: string): string | undefined {
-  const account = connection.account ?? "<account>";
-  switch (connection.provider) {
+function localCreateCommand(provider: string | undefined, account: string, name: string) {
+  switch (provider) {
     case "github":
       return `gh repo create ${account}/${name} --private`;
     case "gitlab":
@@ -132,15 +161,20 @@ const PUSH_THEN_PLAN_AGAIN =
 function creationGuidance(
   enterprise: Enterprise,
   connection: Connection,
-  status: CreationStatus,
+  status: "available" | BlockedReason,
   name: string
 ): Target["create"] {
   const label = providerLabel(connection.provider);
   const account = connection.account ?? "the connected account";
-  const command = localCreateCommand(connection, name);
+  const command = localCreateCommand(connection.provider, connection.account ?? "<account>", name);
   const locally = command
     ? `create it with the user's own ${label} credentials (${command}), ${PUSH_THEN_PLAN_AGAIN}`
     : `create it under ${account} in ${label} with the user's own credentials (web UI or REST API; there is no first-party CLI), ${PUSH_THEN_PLAN_AGAIN}`;
+  const provider = (instructions: string): Target["create"] => ({
+    how: "provider",
+    command,
+    instructions,
+  });
   switch (status) {
     case "available":
       return {
@@ -150,47 +184,65 @@ function creationGuidance(
           `Call setup_workspace with create_repo true, repo_name "${name}", enterprise_id ${enterprise.id}, ` +
           `connection_id ${connection.id}, and either workspace_name + ruleset_ids or existing_workspace_id.`,
       };
-    case "connect_github_account":
-      return {
-        how: "provider",
-        command,
-        instructions:
-          `infracodebase can create this repository on ${label} under ${account}, but only with the user's own ` +
+    case "connect_personal_account":
+      return provider(
+        `infracodebase can create this repository on ${label} under ${account}, but only with the user's own ` +
           `${label} account, which they have not connected. Tell them: connect it in infracodebase under ` +
-          `Settings → Connections and call plan_workspace_setup again, or ${locally}`,
-      };
+          `Settings → Connections and call plan_workspace_setup again, or ${locally}`
+      );
+    case "personal_account_mismatch":
+      return provider(
+        `${account} is a personal ${label} account, and the user is connected as a different account, so a ` +
+          `repository created as them would land under their own account, not ${account}. Tell them: pick an ` +
+          `organization connection, or ${locally}`
+      );
+    case "insufficient_scope":
+      return provider(
+        `This token is read-only; creating a repository needs a "Read and write" token. Ask the user for one ` +
+          `(infracodebase Settings → Personal Access Tokens) and call plan_workspace_setup again, or ${locally}`
+      );
     case "not_permitted":
-      return {
-        how: "provider",
-        command,
-        instructions:
-          `The user may not create repositories in enterprise ${enterprise.name ?? enterprise.id} ` +
-          `(the integrations permission). Ask an enterprise admin to grant it, or ${locally}`,
-      };
+      return provider(
+        `The user may not create repositories in enterprise ${enterprise.name ?? enterprise.id} ` +
+          `(the integrations permission). Ask an enterprise admin to grant it, or ${locally}`
+      );
     case "user_context_required":
-      return {
-        how: "provider",
-        command,
-        instructions:
-          `This token is an enterprise access token, which has no person to create a repository as. ` +
-          `Use a personal token, or ${locally}`,
-      };
+      return provider(
+        `This token is an enterprise access token, which has no person to create a repository as. ` +
+          `Use a personal token, or ${locally}`
+      );
+    case "server_too_old":
+      return provider(
+        `This infracodebase server does not support creating repositories through the API (its ` +
+          `connections carry no repository_creation field); an upgrade would. Tell the user to ${locally}`
+      );
+    case "unknown_status":
+      return provider(
+        `The server reported a repository_creation status this MCP does not know ` +
+          `("${connection.repository_creation}"); an update of @infracodebase/mcp would. Tell the user to ${locally}`
+      );
     default:
-      return {
-        how: "provider",
-        command,
-        instructions:
-          `infracodebase cannot create repositories on ${label} as the user yet, and it never creates ` +
-          `them with the enterprise connection. Tell the user to ${locally}`,
-      };
+      return provider(
+        `infracodebase cannot create repositories on ${label} as the user yet, and it never creates ` +
+          `them with the enterprise connection. Tell the user to ${locally}`
+      );
   }
 }
 
 function toTarget(enterprise: Enterprise, connection: Connection, name: string): Target {
-  // A server without the field predates creation through the API: the only
-  // path is the provider, whatever the provider.
-  const status = connection.repository_creation ?? "unsupported_provider";
-  return {
+  const reported = connection.repository_creation;
+  const status: "available" | BlockedReason =
+    reported === undefined
+      ? "server_too_old"
+      : isCreationStatus(reported)
+        ? reported
+        : "unknown_status";
+  if (status !== "available" && status !== reported) {
+    console.error(
+      `[infracodebase-mcp] connection ${connection.id}: repository_creation ${reported === undefined ? "missing" : `"${reported}"`} (${status})`
+    );
+  }
+  const base: TargetBase = {
     enterprise_id: enterprise.id,
     enterprise: enterprise.name,
     connection_id: connection.id,
@@ -198,10 +250,12 @@ function toTarget(enterprise: Enterprise, connection: Connection, name: string):
     host: connection.host,
     account: connection.account,
     account_type: connection.account_type,
-    repository_creation: status,
     allowed_visibilities: connection.allowed_visibilities ?? ["private"],
-    create: creationGuidance(enterprise, connection, status, name),
   };
+  const create = creationGuidance(enterprise, connection, status, name);
+  return create.how === "setup_workspace"
+    ? { ...base, repository_creation: "available", create }
+    : { ...base, repository_creation: status as BlockedReason, create };
 }
 
 const summarizeResource = (r: Resource) => ({ id: r.id, name: r.name, description: r.description });
@@ -248,7 +302,10 @@ function rulesetsDecision(optional: Resource[]): Decision | null {
 /**
  * The answer when the repository does not exist yet: every connected account
  * it could live under, and the plan when exactly one is chosen and
- * infracodebase can create there as the user.
+ * infracodebase can create there as the user. With `owner` (the remote names
+ * a repository nobody can see), only accounts matching that owner qualify:
+ * creating under another account would make a second repository, not the
+ * one the remote points at.
  */
 async function missingRepoPlan(
   client: InfracodebaseClient,
@@ -256,15 +313,19 @@ async function missingRepoPlan(
     status: "no_remote" | "repo_not_found";
     repo: Record<string, unknown>;
     repoName: string | undefined;
+    owner?: string;
     scope: Array<{ enterprise: Enterprise; connections: Connection[] }>;
     extra?: Record<string, unknown>;
   }
 ) {
-  const { status, repo, repoName, scope, extra } = args;
+  const { status, repo, repoName, owner, scope, extra } = args;
   const name = repoName ?? "<name>";
-  const targets = scope.flatMap(({ enterprise, connections }) =>
+  const allTargets = scope.flatMap(({ enterprise, connections }) =>
     connections.map((c) => toTarget(enterprise, c, name))
   );
+  const targets = owner
+    ? allTargets.filter((t) => t.account && sameIgnoringCase(t.account, owner))
+    : allTargets;
   const base = { status, repo, ...extra, targets };
   const why =
     status === "no_remote"
@@ -272,6 +333,19 @@ async function missingRepoPlan(
       : "No version-control connection can see this repository, so it may not exist yet (or the connection lacks access to it: check `similar`).";
 
   if (targets.length === 0) {
+    if (owner && allTargets.length > 0) {
+      return {
+        ...base,
+        other_targets: allTargets,
+        next:
+          `${why} None of the connected accounts is ${owner}, the owner the remote names, so creating through ` +
+          `any of them would make a different repository (for example ${allTargets[0].account}/${name}), not ` +
+          `${owner}/${name}. Ask the user: either create ${owner}/${name} with their own credentials ` +
+          `(${localCreateCommand(allTargets[0].provider, owner, name) ?? "in the provider"}), ${PUSH_THEN_PLAN_AGAIN} ` +
+          "Or, if the repository should live under one of the connected accounts instead, have them remove the " +
+          "stale remote (`git remote remove origin`) and call plan_workspace_setup again without repo_url.",
+      };
+    }
     return {
       ...base,
       next:
@@ -296,7 +370,7 @@ async function missingRepoPlan(
             account: t.account,
             repository_creation: t.repository_creation,
           })),
-        },
+        } satisfies Decision,
       ],
       next:
         `${why} Ask the user which connected account it should live under (a target whose ` +
@@ -362,7 +436,10 @@ async function missingRepoPlan(
       "decisions_needed. Do not call setup_workspace until they have. Then call setup_workspace with " +
       `create_repo true, repo_name, visibility, enterprise_id ${enterprise.id}, connection_id ` +
       `${target.connection_id}, and either workspace_name + ruleset_ids or existing_workspace_id. It ` +
-      "creates the repository, links it, and returns the clone URL to add as the git remote.",
+      "creates the repository, links it, and returns the clone URL to add as the git remote." +
+      (status === "repo_not_found"
+        ? " The checkout already has a remote, so the user will point it at the new repository with `git remote set-url origin`."
+        : ""),
   };
 }
 
@@ -402,16 +479,14 @@ export const planWorkspaceSetup: ToolDef = {
     try {
       detected = await ctx.resolveRepoUrl(a.repo_url);
     } catch (err) {
-      if (a.repo_url) throw err;
-      // Nothing to look for: the repository has to be created before it can
-      // be governed. Say where it could live.
+      // Only "git looked everywhere and found no remote" means a repository
+      // has to be created. A detection failure (git missing, timed out,
+      // refused the directory) must not become a plan to create a duplicate
+      // of a repository that exists; it stays an error asking for repo_url.
+      if (a.repo_url || !(err instanceof NoRemoteError)) throw err;
       return missingRepoPlan(client, {
         status: "no_remote",
-        repo: {
-          url: null,
-          resolved_from: null,
-          detail: err instanceof Error ? err.message : String(err),
-        },
+        repo: { url: null, resolved_from: null, detail: err.message },
         repoName: a.repo_name,
         scope: await loadScope(),
       });
@@ -458,13 +533,34 @@ export const planWorkspaceSetup: ToolDef = {
       provider?: string;
       account?: string;
       repos_matching_name: number;
+      /** Set when this connection could not be searched as the user. */
+      error?: string;
     }> = [];
 
     await Promise.all(
       scope.map(async ({ enterprise, connections }) => {
         await Promise.all(
           connections.map(async (connection) => {
-            const repos = rows<VcsRepo>(await client.listVcsRepos(enterprise.id, connection.id, name));
+            let repos: VcsRepo[];
+            try {
+              repos = rows<VcsRepo>(await client.listVcsRepos(enterprise.id, connection.id, name));
+            } catch (err) {
+              // A GitHub connection answers 403 for a person who has not
+              // connected their own account. That is not "the repo is not
+              // here": record it and keep scanning, so the create targets
+              // can still say "connect your GitHub account" instead of the
+              // whole plan failing on the raw 403.
+              if (!(err instanceof ApiError && err.code === "vcs_user_authorization_required")) throw err;
+              scanned.push({
+                enterprise_id: enterprise.id,
+                connection_id: connection.id,
+                provider: connection.provider,
+                account: connection.account,
+                repos_matching_name: 0,
+                error: err.message,
+              });
+              return;
+            }
             scanned.push({
               enterprise_id: enterprise.id,
               connection_id: connection.id,
@@ -492,12 +588,13 @@ export const planWorkspaceSetup: ToolDef = {
 
     if (matches.length === 0) {
       // The remote names a repo nobody can see. It probably does not exist
-      // yet: offer the same create targets as an empty directory gets, and
-      // default the name to the remote's.
+      // yet: offer the create targets for the remote's owner, named after
+      // the remote.
       return missingRepoPlan(client, {
         status: "repo_not_found",
         repo: { ...repo, path, owner, name },
         repoName: a.repo_name ?? (name || undefined),
+        owner: owner || undefined,
         scope,
         extra: { scanned, similar: similar.slice(0, 5) },
       });

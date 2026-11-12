@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { planWorkspaceSetup } from "./plan_workspace_setup.js";
 import { mockClient, mockContext } from "../test-helpers.js";
+import { ApiError } from "../client.js";
+import { RepoDetectionError } from "../repo-detect.js";
 
 const ent = (id: string, name = id) => ({ id, name, slug: id });
 const conn = (id: string, account = "acme") => ({ id, provider: "github", host: "github.com", account });
@@ -325,7 +327,7 @@ describe("plan_workspace_setup — the repository does not exist yet", () => {
   });
 
   it("names the missing GitHub connection as the fix, not the provider", async () => {
-    const client = enterpriseClient([creatable("conn_1", "acme", "connect_github_account")]);
+    const client = enterpriseClient([creatable("conn_1", "acme", "connect_personal_account")]);
 
     const result = (await planWorkspaceSetup.run(mockContext({ client }), {
       repo_name: "svc",
@@ -414,6 +416,124 @@ describe("plan_workspace_setup — the repository does not exist yet", () => {
 
     await expect(planWorkspaceSetup.run(ctx, { repo_url: "nonsense" })).rejects.toThrow(
       /Could not parse repo_url/
+    );
+  });
+});
+
+describe("plan_workspace_setup — guards around creating", () => {
+  const creatable = (id: string, account: string) => ({
+    ...conn(id, account),
+    account_type: "Organization",
+    repository_creation: "available",
+    allowed_visibilities: ["private"],
+  });
+  const unlinkedContext = (owner: string) =>
+    vi.fn().mockResolvedValue({ status: "unlinked", owner, name: "infra" });
+
+  it("never turns a detection failure into a plan to create", async () => {
+    // git missing, timed out, or refusing the directory: the repository may
+    // well exist, so creating one would make a duplicate.
+    const client = mockClient({
+      listEnterprises: vi.fn().mockResolvedValue({ data: [ent("ent_1")] }),
+      listVcsConnections: vi.fn().mockResolvedValue({ data: [creatable("conn_1", "acme")] }),
+    });
+    const ctx = mockContext({
+      client,
+      resolveRepoUrl: vi.fn(async () => {
+        throw new RepoDetectionError("Could not run git to detect the repository (dubious ownership).");
+      }),
+    });
+
+    await expect(planWorkspaceSetup.run(ctx, {})).rejects.toThrow(/Could not run git/);
+    expect(client.listEnterprises).not.toHaveBeenCalled();
+  });
+
+  it("on repo_not_found, only offers accounts that match the remote's owner", async () => {
+    const client = mockClient({
+      resolveWorkspaceContext: unlinkedContext("acme"),
+      listEnterprises: vi.fn().mockResolvedValue({ data: [ent("ent_1")] }),
+      listVcsConnections: vi
+        .fn()
+        .mockResolvedValue({ data: [creatable("conn_labs", "acme-labs"), creatable("conn_1", "ACME")] }),
+      listVcsRepos: vi.fn().mockResolvedValue({ data: [] }),
+      listWorkspaces: vi.fn().mockResolvedValue({ data: [] }),
+      listEnterpriseResources: vi.fn().mockResolvedValue({ rulesets: [] }),
+    });
+
+    const result = (await planWorkspaceSetup.run(ctxWith(client), {})) as any;
+
+    expect(result.status).toBe("repo_not_found");
+    expect(result.targets.map((t: any) => t.connection_id)).toEqual(["conn_1"]);
+    expect(result.proposed).toMatchObject({ action: "create_repository_and_workspace", repo_name: "infra" });
+    expect(result.next).toContain("git remote set-url origin");
+  });
+
+  it("on repo_not_found with no account for the remote's owner, explains instead of proposing a duplicate", async () => {
+    const client = mockClient({
+      resolveWorkspaceContext: unlinkedContext("acme"),
+      listEnterprises: vi.fn().mockResolvedValue({ data: [ent("ent_1")] }),
+      listVcsConnections: vi.fn().mockResolvedValue({ data: [creatable("conn_labs", "acme-labs")] }),
+      listVcsRepos: vi.fn().mockResolvedValue({ data: [] }),
+    });
+
+    const result = (await planWorkspaceSetup.run(ctxWith(client), {})) as any;
+
+    expect(result.status).toBe("repo_not_found");
+    expect(result.targets).toEqual([]);
+    expect(result.other_targets).toHaveLength(1);
+    expect(result.proposed).toBeUndefined();
+    expect(result.next).toContain("acme-labs/infra");
+    expect(result.next).toContain("gh repo create acme/infra --private");
+    expect(result.next).toContain("git remote remove origin");
+    expect(client.listEnterpriseResources).not.toHaveBeenCalled();
+  });
+
+  it("keeps scanning when a GitHub connection refuses the person, and still offers the targets", async () => {
+    const refused = new ApiError(
+      403,
+      JSON.stringify({
+        type: "permission_error",
+        code: "vcs_user_authorization_required",
+        message: "Connect your personal GitHub account before browsing or selecting repositories.",
+      }),
+      "/repos"
+    );
+    const client = mockClient({
+      resolveWorkspaceContext: unlinkedContext("acme"),
+      listEnterprises: vi.fn().mockResolvedValue({ data: [ent("ent_1")] }),
+      listVcsConnections: vi.fn().mockResolvedValue({
+        data: [{ ...creatable("conn_1", "acme"), repository_creation: "connect_personal_account" }],
+      }),
+      listVcsRepos: vi.fn().mockRejectedValue(refused),
+    });
+
+    const result = (await planWorkspaceSetup.run(ctxWith(client), {})) as any;
+
+    expect(result.status).toBe("repo_not_found");
+    expect(result.scanned[0].error).toContain("Connect your personal GitHub account");
+    expect(result.target.repository_creation).toBe("connect_personal_account");
+    expect(result.next).toContain("Settings → Connections");
+  });
+
+  it("names an unknown status and an old server for what they are, not as the provider's fault", async () => {
+    const client = mockClient({
+      listEnterprises: vi.fn().mockResolvedValue({ data: [ent("ent_1")] }),
+      listVcsConnections: vi.fn().mockResolvedValue({
+        data: [
+          { ...creatable("conn_new", "acme"), repository_creation: "rate_limited" },
+          { ...conn("conn_old", "acme-old") },
+        ],
+      }),
+    });
+
+    const result = (await planWorkspaceSetup.run(mockContext({ client }), { repo_name: "svc" })) as any;
+
+    const byId = Object.fromEntries(result.targets.map((t: any) => [t.connection_id, t]));
+    expect(byId.conn_new.repository_creation).toBe("unknown_status");
+    expect(byId.conn_new.create.instructions).toContain("does not know");
+    expect(byId.conn_old.repository_creation).toBe("server_too_old");
+    expect(byId.conn_old.create.instructions).toContain(
+      "does not support creating repositories through the API"
     );
   });
 });

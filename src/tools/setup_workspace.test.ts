@@ -210,9 +210,8 @@ describe("setup_workspace — create the repository first", () => {
     );
     expect(result.status).toBe("linked");
     expect(result.repository).toEqual(created);
-    expect(result.next).toContain(
-      "git remote add origin https://github.com/acme/platform-network.git && git pull --rebase origin main"
-    );
+    expect(result.next).toContain("git remote add origin https://github.com/acme/platform-network.git");
+    expect(result.next).toContain("git pull --rebase origin main");
     expect(result.next).toContain("trigger_compliance_evaluation");
   });
 
@@ -282,5 +281,92 @@ describe("setup_workspace — create the repository first", () => {
       })
     ).rejects.toBe(refusal);
     expect(client.createWorkspace).not.toHaveBeenCalled();
+  });
+});
+
+describe("setup_workspace — a created repository is never lost", () => {
+  const created = {
+    provider: "github",
+    path: "acme/platform-network",
+    name: "platform-network",
+    default_branch: "main",
+    visibility: "private",
+    web_url: "https://github.com/acme/platform-network",
+    clone_url: "https://github.com/acme/platform-network.git",
+  };
+  const createArgs = {
+    enterprise_id: "ent_1",
+    connection_id: "conn_1",
+    create_repo: true,
+    repo_name: "platform-network",
+  };
+
+  it("checks every argument before creating anything", async () => {
+    const client = mockClient();
+
+    await expect(setupWorkspace.run(mockContext({ client }), createArgs)).rejects.toThrow(
+      /workspace_name/
+    );
+    await expect(
+      setupWorkspace.run(mockContext({ client }), {
+        ...createArgs,
+        workspace_name: "x",
+        repo_path: "acme/other",
+        branch: "main",
+      })
+    ).rejects.toThrow(/omit repo_path and branch/);
+    await expect(
+      setupWorkspace.run(mockContext({ client }), {
+        enterprise_id: "ent_1",
+        connection_id: "conn_1",
+        repo_path: "acme/other",
+        branch: "main",
+        repo_name: "stray",
+        workspace_name: "x",
+      })
+    ).rejects.toThrow(/only apply with create_repo/);
+    expect(client.createVcsRepository).not.toHaveBeenCalled();
+    expect(client.createWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("keeps the repository and says to link it when the workspace step throws", async () => {
+    const client = mockClient({
+      createVcsRepository: vi.fn().mockResolvedValue(created),
+      createWorkspace: vi.fn().mockRejectedValue(new Error("409 a workspace already owns this repo")),
+    });
+
+    const result = (await setupWorkspace.run(mockContext({ client }), {
+      ...createArgs,
+      workspace_name: "platform-network",
+    })) as any;
+
+    expect(result.status).toBe("repository_created_but_setup_failed");
+    expect(result.repository).toEqual(created);
+    expect(result.error).toContain("409");
+    expect(result.next).toContain("Do not pass create_repo again");
+    expect(result.next).toContain('repo_path "acme/platform-network"');
+    expect(result.next).toContain("git remote add origin https://github.com/acme/platform-network.git");
+  });
+
+  it("tells the agent to link, not recreate, when the link fails after creation", async () => {
+    const client = mockClient({
+      createVcsRepository: vi.fn().mockResolvedValue(created),
+      createWorkspace: vi.fn().mockResolvedValue({
+        workspace: { id: "ws_new" },
+        repository_linked: false,
+        repository_error: "clone failed",
+      }),
+      resolveWorkspaceContext: vi.fn().mockResolvedValue({ status: "linked" }),
+    });
+
+    const result = (await setupWorkspace.run(mockContext({ client }), {
+      ...createArgs,
+      workspace_name: "platform-network",
+    })) as any;
+
+    expect(result.status).toBe("workspace_ready_but_link_failed");
+    expect(result.repository).toEqual(created);
+    expect(result.next).toContain("Do not pass create_repo again");
+    expect(result.next).not.toContain("push an initial commit");
   });
 });

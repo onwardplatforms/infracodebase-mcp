@@ -646,6 +646,13 @@ function hintFor(
       : `This token is read-only. Creating or linking workspaces and attaching rulesets need a "Read and write" token from ${origin}/settings/tokens; ask the user to create one and update INFRACODEBASE_TOKEN.`;
   }
   if (status === 429) return "Rate limited. Wait before retrying.";
+  if (status >= 500) {
+    return (
+      "The server failed before answering. Quote the request_id to support. If this call created " +
+      "something (a repository, a workspace), check whether it exists before retrying, so the retry " +
+      "links it instead of creating it again."
+    );
+  }
   return null;
 }
 
