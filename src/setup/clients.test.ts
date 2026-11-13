@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   appConfigDir,
+  devinConfigDir,
   clientsFor,
   codexServerEntry,
   entryApiUrl,
@@ -289,6 +290,7 @@ describe("operating systems", () => {
       "cursor",
       "vscode",
       "windsurf",
+      "devin",
       "codex",
     ]);
     expect(clientsFor("win32").map((client) => client.id)).toContain("claude-desktop");
@@ -328,6 +330,38 @@ describe("operating systems", () => {
       NEXTERA
     );
   });
+
+  it.each([
+    ["darwin", {}, [".config", "devin"]],
+    ["linux", {}, [".config", "devin"]],
+    ["linux", { xdgConfigHome: "xdg" }, ["xdg", "devin"]],
+    ["darwin", { xdgConfigHome: "xdg" }, ["xdg", "devin"]],
+    ["win32", { appData: "ignored" }, ["AppData", "Roaming", "devin"]],
+  ] as const)(
+    "writes Devin Desktop's config where Devin reads it on %s %o",
+    async (platform, overrides, segments) => {
+      const home = await temporaryHome();
+      const devin = findClient("devin")!;
+      const env = fakeEnv(home, {
+        platform,
+        ...Object.fromEntries(
+          Object.entries(overrides).map(([key, value]) => [key, path.join(home, value)])
+        ),
+      });
+      const dir = path.join(home, ...segments);
+      expect(devinConfigDir(env)).toBe(dir);
+
+      expect(await devin.detect(env)).toBe(false);
+      await mkdir(dir, { recursive: true });
+      expect(await devin.detect(env)).toBe(true);
+
+      await devin.install(env, launch);
+      expect(await devin.existingApiUrl(env)).toBe(NEXTERA);
+      expect(JSON.parse(await readFile(path.join(dir, "mcp_config.json"), "utf8"))).toEqual({
+        mcpServers: { infracodebase: { command: launch.command, args: launch.args } },
+      });
+    }
+  );
 
   it("reads Codex and Claude Code config from CODEX_HOME and CLAUDE_CONFIG_DIR when set", async () => {
     const home = await temporaryHome();
