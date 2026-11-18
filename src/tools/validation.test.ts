@@ -15,8 +15,9 @@ describe("tool metadata", () => {
   });
 
   it("keeps every description inside the budget clients display in full", () => {
-    // Claude Code truncates tool descriptions at 2,048 characters. Guidance the
-    // agent must act on belongs in the response payload, not past that point.
+    // Claude Code cuts upfront tool descriptions at 4,096 characters (2,048
+    // before v2.1.296). Guidance the agent must act on belongs in the response
+    // payload, not past that point.
     for (const [name, description] of Object.entries(TOOL_DESCRIPTIONS)) {
       expect(description.length, `${name} description is too long`).toBeLessThanOrEqual(
         DESCRIPTION_BUDGET

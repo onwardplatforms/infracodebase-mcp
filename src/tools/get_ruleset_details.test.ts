@@ -37,3 +37,51 @@ describe("get_ruleset_details", () => {
     });
   });
 });
+
+describe("get_ruleset_details detail levels", () => {
+  const ctxWith = (rules: unknown[]) =>
+    mockContext({
+      client: mockClient({
+        getRulesetDetails: vi.fn().mockResolvedValue({ id: "rs_1", title: "Storage", rules }),
+      }),
+      getEnterpriseForWorkspace: vi.fn().mockResolvedValue("ent_1"),
+    });
+
+  it("drops each rule's content in summary detail and keeps the ruleset fields", async () => {
+    const ctx = ctxWith([
+      {
+        id: "rule_1",
+        title: "Encrypt at rest",
+        content: "# long body",
+        required: true,
+        enabled: true,
+      },
+    ]);
+
+    const result = await getRulesetDetails.run(ctx, {
+      workspace_id: "ws_1",
+      ruleset_id: "rs_1",
+      detail: "summary",
+    });
+
+    expect(result).toEqual({
+      id: "rs_1",
+      title: "Storage",
+      detail: "summary",
+      rules: [{ id: "rule_1", title: "Encrypt at rest", required: true, enabled: true }],
+    });
+  });
+
+  it("keeps rule content in full detail", async () => {
+    const ctx = ctxWith([{ id: "rule_1", content: "# long body" }]);
+
+    const result = (await getRulesetDetails.run(ctx, {
+      workspace_id: "ws_1",
+      ruleset_id: "rs_1",
+      detail: "full",
+    })) as { rules: Array<{ content?: string }>; detail?: string };
+
+    expect(result.rules[0].content).toBe("# long body");
+    expect(result).not.toHaveProperty("detail");
+  });
+});

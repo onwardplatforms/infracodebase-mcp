@@ -33,7 +33,7 @@ src/
 ├── config.ts           token/URL resolution from flags + env (no stored file)
 ├── client.ts           REST API client (auth, ApiError formatting)
 ├── instructions.ts     server instructions (budgeted; instructions.test.ts enforces it)
-├── repo-detect.ts      repo auto-detection: argument, then client roots, then cwd git remote
+├── repo-detect.ts      repo and branch auto-detection: argument, then client roots, then cwd git checkout
 ├── cli/
 │   └── usage.ts        `help` / usage text
 ├── setup/

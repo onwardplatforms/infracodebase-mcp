@@ -17,14 +17,23 @@ import { createToolContext, registerTool, type ToolDef } from "./helpers.js";
 import { listEnterprises } from "./list_enterprises.js";
 import { listWorkspaces } from "./list_workspaces.js";
 import { getWorkspaceContext } from "./get_workspace_context.js";
+import { getBuildRules } from "./get_build_rules.js";
 import { getRulesetDetails } from "./get_ruleset_details.js";
 import { listWorkspaceRulesets } from "./list_workspace_rulesets.js";
 import { getComplianceEvaluation } from "./get_compliance_evaluation.js";
+import { waitForComplianceEvaluation } from "./wait_for_compliance_evaluation.js";
 import { triggerComplianceEvaluation } from "./trigger_compliance_evaluation.js";
 import { listComplianceFindings } from "./list_compliance_findings.js";
 import { getComplianceEvalSpec } from "./get_compliance_eval_spec.js";
+import { listComplianceExceptions } from "./list_compliance_exceptions.js";
+import { submitComplianceExceptions } from "./submit_compliance_exceptions.js";
+import { approveComplianceException } from "./approve_compliance_exception.js";
+import { rejectComplianceException } from "./reject_compliance_exception.js";
+import { revokeComplianceException } from "./revoke_compliance_exception.js";
 import { listEnterpriseResources } from "./list_enterprise_resources.js";
 import { listModules } from "./list_modules.js";
+import { listWorkspaceModules } from "./list_workspace_modules.js";
+import { listModuleConsumers } from "./list_module_consumers.js";
 import { listVcsConnections } from "./list_vcs_connections.js";
 import { listVcsRepos } from "./list_vcs_repos.js";
 import { planWorkspaceSetup } from "./plan_workspace_setup.js";
@@ -39,17 +48,27 @@ export const TOOLS: ToolDef[] = [
   listEnterprises,
   listWorkspaces,
   getWorkspaceContext,
+  getBuildRules,
   // Rulesets
   getRulesetDetails,
   listWorkspaceRulesets,
   // Compliance
   getComplianceEvaluation,
+  waitForComplianceEvaluation,
   triggerComplianceEvaluation,
   listComplianceFindings,
   getComplianceEvalSpec,
+  // Compliance exceptions
+  listComplianceExceptions,
+  submitComplianceExceptions,
+  approveComplianceException,
+  rejectComplianceException,
+  revokeComplianceException,
   // Enterprise resources
   listEnterpriseResources,
   listModules,
+  listWorkspaceModules,
+  listModuleConsumers,
   // Version control
   listVcsConnections,
   listVcsRepos,

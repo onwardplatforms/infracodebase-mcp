@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { planWorkspaceSetup } from "./plan_workspace_setup.js";
 import { mockClient, mockContext } from "../test-helpers.js";
+import { ApiError } from "../client.js";
+import { RepoDetectionError } from "../repo-detect.js";
 
 const ent = (id: string, name = id) => ({ id, name, slug: id });
 const conn = (id: string, account = "acme") => ({ id, provider: "github", host: "github.com", account });
@@ -230,5 +232,308 @@ describe("plan_workspace_setup — no match or several", () => {
       /ent_nope is not an enterprise this token can access/
     );
     expect(client.listVcsConnections).not.toHaveBeenCalled();
+  });
+});
+
+describe("plan_workspace_setup — the repository does not exist yet", () => {
+  const creatable = (id: string, account = "acme", repository_creation = "available") => ({
+    ...conn(id, account),
+    account_type: "Organization",
+    repository_creation,
+    allowed_visibilities: ["private", "internal"],
+  });
+
+  function enterpriseClient(connections: unknown[]) {
+    return mockClient({
+      listEnterprises: vi.fn().mockResolvedValue({ data: [ent("ent_1", "Acme")] }),
+      listVcsConnections: vi.fn().mockResolvedValue({ data: connections }),
+      listWorkspaces: vi.fn().mockResolvedValue({
+        data: [{ id: "ws_free", name: "Sandbox", slug: "sandbox", description: null, linked_repository: null }],
+      }),
+      listEnterpriseResources: vi.fn().mockResolvedValue({
+        rulesets: [
+          { id: "rs_req", name: "Baseline", required: true },
+          { id: "rs_opt", name: "S3", required: false },
+        ],
+      }),
+    });
+  }
+
+  it("proposes creating the repo through setup_workspace when the one target can create as the user", async () => {
+    // An empty directory: the default context resolver throws (no remote).
+    const client = enterpriseClient([creatable("conn_1")]);
+
+    const result = (await planWorkspaceSetup.run(mockContext({ client }), {
+      repo_name: "platform-network",
+    })) as any;
+
+    expect(result.status).toBe("no_remote");
+    expect(result.repo).toMatchObject({ url: null, resolved_from: null });
+    expect(result.targets).toHaveLength(1);
+    expect(result.target).toMatchObject({
+      enterprise_id: "ent_1",
+      connection_id: "conn_1",
+      repository_creation: "available",
+      create: { how: "setup_workspace" },
+    });
+    expect(result.proposed).toEqual({
+      action: "create_repository_and_workspace",
+      repo_name: "platform-network",
+      visibility: "private",
+      workspace_name: "platform-network",
+      ruleset_ids: ["rs_req"],
+    });
+    expect(result.decisions_needed.map((d: any) => d.decision)).toEqual([
+      "visibility",
+      "workspace",
+      "rulesets",
+    ]);
+    expect(result.next).toContain("create_repo true");
+    expect(result.next).toContain("Do not call setup_workspace until they have");
+    // The repo search never runs: there is no path to look for.
+    expect(client.listVcsRepos).not.toHaveBeenCalled();
+  });
+
+  it("asks for the repository name when none was given", async () => {
+    const client = enterpriseClient([creatable("conn_1")]);
+
+    const result = (await planWorkspaceSetup.run(mockContext({ client }), {})) as any;
+
+    expect(result.status).toBe("no_remote");
+    expect(result.decisions_needed[0].decision).toBe("repository_name");
+    expect(result.proposed.repo_name).toBeUndefined();
+  });
+
+  it("tells the agent to have the user create it in the provider when the target cannot create as the user", async () => {
+    const client = enterpriseClient([
+      { ...conn("conn_gl", "acme-group"), provider: "gitlab", repository_creation: "unsupported_provider" },
+    ]);
+
+    const result = (await planWorkspaceSetup.run(mockContext({ client }), {
+      repo_name: "platform-network",
+    })) as any;
+
+    expect(result.status).toBe("no_remote");
+    expect(result.target.create).toEqual({
+      how: "provider",
+      command: "glab repo create acme-group/platform-network --private",
+      instructions: expect.stringContaining("never creates them with the enterprise connection"),
+    });
+    expect(result.next).toContain("glab repo create acme-group/platform-network --private");
+    expect(result.next).toContain("plan_workspace_setup again");
+    // No plan is built for a target infracodebase cannot create through.
+    expect(client.listEnterpriseResources).not.toHaveBeenCalled();
+    expect(result.proposed).toBeUndefined();
+  });
+
+  it("names the missing GitHub connection as the fix, not the provider", async () => {
+    const client = enterpriseClient([creatable("conn_1", "acme", "connect_personal_account")]);
+
+    const result = (await planWorkspaceSetup.run(mockContext({ client }), {
+      repo_name: "svc",
+    })) as any;
+
+    expect(result.target.create.how).toBe("provider");
+    expect(result.next).toContain("Settings → Connections");
+    expect(result.next).toContain("gh repo create acme/svc --private");
+  });
+
+  it("turns several possible homes into a target decision, preferring ones infracodebase can create through", async () => {
+    const client = enterpriseClient([
+      creatable("conn_1"),
+      { ...conn("conn_gl", "acme-group"), provider: "gitlab", repository_creation: "unsupported_provider" },
+    ]);
+
+    const result = (await planWorkspaceSetup.run(mockContext({ client }), {
+      repo_name: "svc",
+    })) as any;
+
+    expect(result.status).toBe("no_remote");
+    expect(result.decisions_needed).toEqual([
+      expect.objectContaining({
+        decision: "target",
+        options: [
+          expect.objectContaining({ connection_id: "conn_1", repository_creation: "available" }),
+          expect.objectContaining({ connection_id: "conn_gl", repository_creation: "unsupported_provider" }),
+        ],
+      }),
+    ]);
+    expect(result.next).toContain("enterprise_id and connection_id, plus repo_name");
+  });
+
+  it("narrows to the chosen target on the second pass", async () => {
+    const client = enterpriseClient([
+      creatable("conn_1"),
+      { ...conn("conn_gl", "acme-group"), provider: "gitlab", repository_creation: "unsupported_provider" },
+    ]);
+
+    const result = (await planWorkspaceSetup.run(mockContext({ client }), {
+      enterprise_id: "ent_1",
+      connection_id: "conn_1",
+      repo_name: "svc",
+    })) as any;
+
+    expect(result.targets).toHaveLength(1);
+    expect(result.proposed.action).toBe("create_repository_and_workspace");
+  });
+
+  it("offers the same targets for a remote no connection can see, named after the remote", async () => {
+    const client = enterpriseClient([creatable("conn_1")]);
+    client.resolveWorkspaceContext = vi
+      .fn()
+      .mockResolvedValue({ status: "unlinked", owner: "acme", name: "infra" });
+    client.listVcsRepos = vi.fn().mockResolvedValue({ data: [] });
+
+    const result = (await planWorkspaceSetup.run(ctxWith(client), {})) as any;
+
+    expect(result.status).toBe("repo_not_found");
+    expect(result.scanned).toHaveLength(1);
+    expect(result.targets).toHaveLength(1);
+    expect(result.proposed).toMatchObject({
+      action: "create_repository_and_workspace",
+      repo_name: "infra",
+    });
+  });
+
+  it("says when no connection could hold the repository at all", async () => {
+    const client = enterpriseClient([]);
+
+    const result = (await planWorkspaceSetup.run(mockContext({ client }), { repo_name: "svc" })) as any;
+
+    expect(result.status).toBe("no_remote");
+    expect(result.targets).toEqual([]);
+    expect(result.next).toContain("Settings → Version control");
+  });
+
+  it("still fails loudly when repo_url was given but names nothing resolvable", async () => {
+    const client = enterpriseClient([creatable("conn_1")]);
+    const ctx = mockContext({
+      client,
+      resolveRepoUrl: vi.fn(async () => {
+        throw new Error("Could not parse repo_url");
+      }),
+    });
+
+    await expect(planWorkspaceSetup.run(ctx, { repo_url: "nonsense" })).rejects.toThrow(
+      /Could not parse repo_url/
+    );
+  });
+});
+
+describe("plan_workspace_setup — guards around creating", () => {
+  const creatable = (id: string, account: string) => ({
+    ...conn(id, account),
+    account_type: "Organization",
+    repository_creation: "available",
+    allowed_visibilities: ["private"],
+  });
+  const unlinkedContext = (owner: string) =>
+    vi.fn().mockResolvedValue({ status: "unlinked", owner, name: "infra" });
+
+  it("never turns a detection failure into a plan to create", async () => {
+    // git missing, timed out, or refusing the directory: the repository may
+    // well exist, so creating one would make a duplicate.
+    const client = mockClient({
+      listEnterprises: vi.fn().mockResolvedValue({ data: [ent("ent_1")] }),
+      listVcsConnections: vi.fn().mockResolvedValue({ data: [creatable("conn_1", "acme")] }),
+    });
+    const ctx = mockContext({
+      client,
+      resolveRepoUrl: vi.fn(async () => {
+        throw new RepoDetectionError("Could not run git to detect the repository (dubious ownership).");
+      }),
+    });
+
+    await expect(planWorkspaceSetup.run(ctx, {})).rejects.toThrow(/Could not run git/);
+    expect(client.listEnterprises).not.toHaveBeenCalled();
+  });
+
+  it("on repo_not_found, only offers accounts that match the remote's owner", async () => {
+    const client = mockClient({
+      resolveWorkspaceContext: unlinkedContext("acme"),
+      listEnterprises: vi.fn().mockResolvedValue({ data: [ent("ent_1")] }),
+      listVcsConnections: vi
+        .fn()
+        .mockResolvedValue({ data: [creatable("conn_labs", "acme-labs"), creatable("conn_1", "ACME")] }),
+      listVcsRepos: vi.fn().mockResolvedValue({ data: [] }),
+      listWorkspaces: vi.fn().mockResolvedValue({ data: [] }),
+      listEnterpriseResources: vi.fn().mockResolvedValue({ rulesets: [] }),
+    });
+
+    const result = (await planWorkspaceSetup.run(ctxWith(client), {})) as any;
+
+    expect(result.status).toBe("repo_not_found");
+    expect(result.targets.map((t: any) => t.connection_id)).toEqual(["conn_1"]);
+    expect(result.proposed).toMatchObject({ action: "create_repository_and_workspace", repo_name: "infra" });
+    expect(result.next).toContain("git remote set-url origin");
+  });
+
+  it("on repo_not_found with no account for the remote's owner, explains instead of proposing a duplicate", async () => {
+    const client = mockClient({
+      resolveWorkspaceContext: unlinkedContext("acme"),
+      listEnterprises: vi.fn().mockResolvedValue({ data: [ent("ent_1")] }),
+      listVcsConnections: vi.fn().mockResolvedValue({ data: [creatable("conn_labs", "acme-labs")] }),
+      listVcsRepos: vi.fn().mockResolvedValue({ data: [] }),
+    });
+
+    const result = (await planWorkspaceSetup.run(ctxWith(client), {})) as any;
+
+    expect(result.status).toBe("repo_not_found");
+    expect(result.targets).toEqual([]);
+    expect(result.other_targets).toHaveLength(1);
+    expect(result.proposed).toBeUndefined();
+    expect(result.next).toContain("acme-labs/infra");
+    expect(result.next).toContain("gh repo create acme/infra --private");
+    expect(result.next).toContain("git remote remove origin");
+    expect(client.listEnterpriseResources).not.toHaveBeenCalled();
+  });
+
+  it("keeps scanning when a GitHub connection refuses the person, and still offers the targets", async () => {
+    const refused = new ApiError(
+      403,
+      JSON.stringify({
+        type: "permission_error",
+        code: "vcs_user_authorization_required",
+        message: "Connect your personal GitHub account before browsing or selecting repositories.",
+      }),
+      "/repos"
+    );
+    const client = mockClient({
+      resolveWorkspaceContext: unlinkedContext("acme"),
+      listEnterprises: vi.fn().mockResolvedValue({ data: [ent("ent_1")] }),
+      listVcsConnections: vi.fn().mockResolvedValue({
+        data: [{ ...creatable("conn_1", "acme"), repository_creation: "connect_personal_account" }],
+      }),
+      listVcsRepos: vi.fn().mockRejectedValue(refused),
+    });
+
+    const result = (await planWorkspaceSetup.run(ctxWith(client), {})) as any;
+
+    expect(result.status).toBe("repo_not_found");
+    expect(result.scanned[0].error).toContain("Connect your personal GitHub account");
+    expect(result.target.repository_creation).toBe("connect_personal_account");
+    expect(result.next).toContain("Settings → Connections");
+  });
+
+  it("names an unknown status and an old server for what they are, not as the provider's fault", async () => {
+    const client = mockClient({
+      listEnterprises: vi.fn().mockResolvedValue({ data: [ent("ent_1")] }),
+      listVcsConnections: vi.fn().mockResolvedValue({
+        data: [
+          { ...creatable("conn_new", "acme"), repository_creation: "rate_limited" },
+          { ...conn("conn_old", "acme-old") },
+        ],
+      }),
+    });
+
+    const result = (await planWorkspaceSetup.run(mockContext({ client }), { repo_name: "svc" })) as any;
+
+    const byId = Object.fromEntries(result.targets.map((t: any) => [t.connection_id, t]));
+    expect(byId.conn_new.repository_creation).toBe("unknown_status");
+    expect(byId.conn_new.create.instructions).toContain("does not know");
+    expect(byId.conn_old.repository_creation).toBe("server_too_old");
+    expect(byId.conn_old.create.instructions).toContain(
+      "does not support creating repositories through the API"
+    );
   });
 });

@@ -7,8 +7,10 @@ import type { ToolDef } from "./helpers.js";
  */
 export const TRIGGER_NEXT =
   "This evaluation runs in the background like a CI check. Share `url` with the user and stop: " +
-  "do not poll, sleep, or estimate how long it will take. Check the result once later with " +
-  "get_compliance_evaluation, or when the user asks.";
+  "do not poll, sleep, or estimate how long it will take. To be told when it finishes, call " +
+  "wait_for_compliance_evaluation once with ref set to this run's id; it waits server-side and " +
+  "returns the result. Otherwise check once later with get_compliance_evaluation, or when the " +
+  "user asks.";
 
 const DEDUPED_NOTE =
   "A full evaluation for this commit was already running, so your scoped request was folded " +

@@ -12,6 +12,7 @@
 
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { WORKSPACE_PAGE_LIMIT } from "../client.js";
 
 /**
  * Mirrors the API's `iac_tool` enum exactly. Helm is deliberately absent: the
@@ -28,14 +29,34 @@ const COMPLIANCE_STATUSES = [
   "not_code_verifiable",
 ] as const;
 
+const EXCEPTION_TYPES = ["risk_acceptance", "not_applicable"] as const;
+
 const WORKSPACE_KINDS = ["STANDARD", "TEMPLATE", "MODULE"] as const;
 
+const DETAIL_LEVELS = ["full", "summary"] as const;
+
+/** Most findings list_compliance_findings returns unless `limit` says otherwise. */
+export const FINDINGS_DEFAULT_LIMIT = 100;
+export const FINDINGS_MAX_LIMIT = 1000;
+
+const detail = (omits: string) =>
+  z
+    .enum(DETAIL_LEVELS)
+    .describe(
+      `full (the default) returns every field. summary omits ${omits}, so a large response ` +
+        "fits in context; use it to survey, then ask for full on what matters."
+    )
+    .optional();
+
 /**
- * Longest description a client is known to show in full. Claude Code cuts tool
- * descriptions at 2,048 characters; the old trigger_compliance_evaluation text
- * was 2,996 and lost its whole "share the url, do not poll" block.
+ * Longest description a client is known to show in full. Claude Code cuts a
+ * tool description at 4,096 characters when the tool loads upfront, and at
+ * 16,384 when it loads through tool search (v2.1.296 and later; before that
+ * the cut was 2,048 for every tool, and the old trigger_compliance_evaluation
+ * text at 2,996 lost its whole "share the url, do not poll" block). Budget for
+ * the shorter limit, since a tool loads upfront whenever it is not deferred.
  */
-export const DESCRIPTION_BUDGET = 1900;
+export const DESCRIPTION_BUDGET = 3800;
 
 const idList = (desc: string) => z.array(z.string().min(1)).describe(desc).optional();
 
@@ -52,6 +73,14 @@ const enterpriseHint = {
     .min(1)
     .describe("Optional. The workspace's enterprise ID; provide it to skip the automatic lookup.")
     .optional(),
+};
+
+const moduleInventoryPage = {
+  ...enterpriseHint,
+  limit: z.number().int().min(1).max(100).optional().describe("References per page, 1-100. Default 50."),
+  cursor: z.string().min(1).max(2000).optional().describe("Opaque next_cursor from the previous page. Keep the same target and filters."),
+  status: z.enum(["all", "updates", "current", "unassessed"]).optional().describe("Default all. Freshness only, not upgrade compatibility."),
+  query: z.string().max(200).optional().describe("Search module or consumer names, versions, source addresses and paths."),
 };
 
 const repoPath = (suffix: string) =>
@@ -77,6 +106,22 @@ export const TOOL_SHAPES = {
 
   list_workspaces: {
     enterprise_id: z.string().min(1).describe("Enterprise ID from list_enterprises."),
+    slug: z
+      .string()
+      .min(1)
+      .describe(
+        "Return only the workspace with this slug. The way to reach a workspace a full page did not show."
+      )
+      .optional(),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(WORKSPACE_PAGE_LIMIT)
+      .describe(
+        `Page size, 1 to ${WORKSPACE_PAGE_LIMIT} (the default). The API has no cursor, so this is the most one call can return.`
+      )
+      .optional(),
     kinds: z
       .array(z.enum(WORKSPACE_KINDS))
       .describe(
@@ -104,16 +149,60 @@ export const TOOL_SHAPES = {
       )
       .optional(),
     iac_tool: iacTool,
+    branch: z
+      .string()
+      .min(1)
+      .describe(
+        "Branch to read rulesets and compliance state for. On a feature branch the answer is that " +
+          "branch's latest completed check, which under automatic discovery evaluates more rulesets " +
+          "than the workspace's settings list. Omit to use the checked-out branch of a checkout of " +
+          "this repo (reported as resolved_branch, or branch_detection says why none was used)."
+      )
+      .optional(),
+    enterprise_id: z
+      .string()
+      .min(1)
+      .describe(
+        "Optional. The enterprise to draft for when the repo is unlinked and you belong to several " +
+          "(after a needs_enterprise result), or the workspace's enterprise to skip a lookup."
+      )
+      .optional(),
+    ruleset_ids: idList(
+      "Unlinked repos only: the optional ruleset ids chosen from available_rulesets (an empty " +
+        "list selects none). Resolves selection_required without a separate get_build_rules call."
+    ),
+  },
+
+  get_build_rules: {
+    enterprise_id: z
+      .string()
+      .min(1)
+      .describe("The setup.enterprise_id from an unlinked get_workspace_context result."),
+    ruleset_ids: idList(
+      "Optional ruleset ids chosen from that result's available_rulesets. Omit or pass an empty " +
+        "list to select none; required rulesets are never listed here because they are already " +
+        "in the context."
+    ),
   },
 
   get_ruleset_details: {
     workspace_id: z.string().min(1).describe("Workspace ID."),
     ruleset_id: z.string().min(1).describe("Ruleset ID, from get_workspace_context."),
+    detail: detail("each rule's content (the full markdown body)"),
     ...enterpriseHint,
   },
 
   list_workspace_rulesets: {
     workspace_id: z.string().min(1).describe("Workspace ID."),
+    branch: z
+      .string()
+      .min(1)
+      .describe(
+        "Mark each ruleset with evaluated_on_branch from this branch's latest completed check. " +
+          "Omit to use the checked-out branch of a checkout of this workspace's repo (reported as " +
+          "resolved_branch, or branch_detection says why none was used)."
+      )
+      .optional(),
     ...enterpriseHint,
   },
 
@@ -128,10 +217,42 @@ export const TOOL_SHAPES = {
       .string()
       .min(1)
       .describe(
-        "Scope 'latest' to this branch (ignored if ref is given). Falls back to the " +
-          "workspace's default branch, then to the most recent completed evaluation on any branch. " +
+        "Scope 'latest' to this branch (ignored if ref is given). A branch with no completed " +
+          "check returns found: false; no other branch is substituted. Omit to use the checked-out " +
+          "branch of a checkout of this workspace's repo (reported as resolved_branch); only when " +
+          "none is detected does the server fall back to the default branch, then any branch. " +
           "Reflects the last evaluation of a PUSHED commit on this branch — it will not show local, " +
           "uncommitted, or unpushed changes."
+      )
+      .optional(),
+    ...enterpriseHint,
+  },
+
+  wait_for_compliance_evaluation: {
+    workspace_id: z.string().min(1).describe("Workspace ID."),
+    ref: z
+      .string()
+      .min(1)
+      .describe(
+        "Evaluation id (from trigger_compliance_evaluation) or commit SHA to wait for. Omit to " +
+          "wait for the latest evaluation on the branch."
+      )
+      .optional(),
+    branch: z
+      .string()
+      .min(1)
+      .describe(
+        "With no ref, the branch whose latest evaluation to wait for. Omit to use the checked-out " +
+          "branch of a checkout of this workspace's repo."
+      )
+      .optional(),
+    max_wait_minutes: z
+      .number()
+      .int()
+      .min(1)
+      .max(25)
+      .describe(
+        "Longest to wait before returning the still-running evaluation. Default and maximum 25."
       )
       .optional(),
     ...enterpriseHint,
@@ -173,6 +294,98 @@ export const TOOL_SHAPES = {
       .enum(COMPLIANCE_STATUSES)
       .describe("Filter findings by their compliance status.")
       .optional(),
+    ruleset_id: z.string().min(1).describe("Only findings from this ruleset.").optional(),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(FINDINGS_MAX_LIMIT)
+      .describe(
+        `Most findings to return (default ${FINDINGS_DEFAULT_LIMIT}). When more exist the ` +
+          "response says so: narrow with status or ruleset_id, or raise this."
+      )
+      .optional(),
+    detail: detail("each finding's justification, evidence, and delta_justification"),
+    ...enterpriseHint,
+  },
+
+  list_compliance_exceptions: {
+    workspace_id: z.string().min(1).describe("Workspace ID."),
+    ...enterpriseHint,
+  },
+
+  submit_compliance_exceptions: {
+    workspace_id: z.string().min(1).describe("Workspace ID."),
+    exceptions: z
+      .array(
+        z.object({
+          rule_id: z.string().min(1).describe("Rule ID from list_compliance_findings."),
+          type: z
+            .enum(EXCEPTION_TYPES)
+            .describe(
+              "risk_acceptance: the rule is genuinely violated and the user accepts the risk. " +
+                "not_applicable: the rule doesn't apply at this level, e.g. a control set per " +
+                "subscription or tenant rather than in this code."
+            ),
+          justification: z
+            .string()
+            .min(1)
+            .max(2000)
+            .describe(
+              "Why this rule can't or shouldn't be fixed here. Reviewers read it, so name the " +
+                "specific constraint or design decision, not a generic reason."
+            ),
+          expires_in_days: z
+            .number()
+            .int()
+            .min(1)
+            .max(365) // the server's MAX_OVERRIDE_EXPIRY_DAYS
+            .describe("Days until it expires. Omit for an exception that never expires (the default).")
+            .optional(),
+        })
+      )
+      .min(1)
+      .describe("One entry per rule."),
+    grant: z
+      .boolean()
+      .describe(
+        "Leave unset to request review (the default, for every user). Set true only when the user " +
+          "has explicitly said to grant: the exceptions take effect immediately with no review, and " +
+          "it fails unless the user holds compliance approve permission."
+      )
+      .optional(),
+    evaluation_id: z
+      .string()
+      .min(1)
+      .describe(
+        "The evaluation_id from the list_compliance_findings response the rules came from, so each " +
+          "exception is judged against that finding. Omit only when the findings were the default " +
+          "branch's latest, which is what the server assumes without it."
+      )
+      .optional(),
+    ...enterpriseHint,
+  },
+
+  approve_compliance_exception: {
+    workspace_id: z.string().min(1).describe("Workspace ID."),
+    rule_id: z.string().min(1).describe("Rule ID of the open request."),
+    ...enterpriseHint,
+  },
+
+  reject_compliance_exception: {
+    workspace_id: z.string().min(1).describe("Workspace ID."),
+    rule_id: z.string().min(1).describe("Rule ID of the open request."),
+    reason: z
+      .string()
+      .min(1)
+      .max(2000)
+      .describe("Why the request is rejected. The requester sees this."),
+    ...enterpriseHint,
+  },
+
+  revoke_compliance_exception: {
+    workspace_id: z.string().min(1).describe("Workspace ID."),
+    rule_id: z.string().min(1).describe("Rule ID of the exception to end."),
     ...enterpriseHint,
   },
 
@@ -188,6 +401,9 @@ export const TOOL_SHAPES = {
   list_modules: {
     enterprise_id: z.string().min(1).describe("Enterprise ID from list_enterprises."),
   },
+
+  list_workspace_modules: {...moduleInventoryPage, workspace_id: z.string().min(1).describe("Workspace ID from get_workspace_context or list_workspaces.")},
+  list_module_consumers: {...moduleInventoryPage, module_id: z.string().min(1).describe("Module workspace ID returned by list_modules.")},
 
   list_vcs_connections: {
     enterprise_id: z.string().min(1).describe("Enterprise ID."),
@@ -216,13 +432,24 @@ export const TOOL_SHAPES = {
     enterprise_id: z
       .string()
       .min(1)
-      .describe("Optional. Only consider this enterprise (use after a needs_decision result).")
+      .describe(
+        "Optional. Only consider this enterprise (use after a needs_decision or target decision)."
+      )
       .optional(),
     connection_id: z
       .string()
       .min(1)
       .describe(
-        "Optional. Only consider this version-control connection (use after a needs_decision result)."
+        "Optional. Only consider this version-control connection (use after a needs_decision or " +
+          "target decision)."
+      )
+      .optional(),
+    repo_name: z
+      .string()
+      .min(1)
+      .describe(
+        "Optional. The name for a repository that does not exist yet (no git remote here, or " +
+          "repo_not_found). Lets the plan propose creating it instead of asking for the name."
       )
       .optional(),
   },
@@ -230,14 +457,43 @@ export const TOOL_SHAPES = {
   setup_workspace: {
     enterprise_id: z.string().min(1).describe("Enterprise ID from the plan."),
     connection_id: z.string().min(1).describe("Version-control connection ID from the plan."),
-    repo_path: repoPath(" from the plan (repo.path)"),
+    repo_path: repoPath(" from the plan (repo.path). Omit with create_repo").optional(),
     branch: z
       .string()
       .min(1)
       .describe(
         "Branch to link: the plan's repo.default_branch unless the user chose another. " +
-          "Must already exist on the remote."
-      ),
+          "Must already exist on the remote. Omit with create_repo: the new repository's " +
+          "default branch is linked."
+      )
+      .optional(),
+    create_repo: z
+      .boolean()
+      .describe(
+        "Create the repository first, on the connection's provider, as the user with their own " +
+          "connected account (never the enterprise connection), then link it. Only when the plan's " +
+          "target has repository_creation `available`; the server refuses any other status " +
+          "(unsupported provider, missing permission, read-only token, enterprise token, " +
+          "unconnected account) and says what to do instead. Requires repo_name; omit repo_path " +
+          "and branch."
+      )
+      .optional(),
+    repo_name: z
+      .string()
+      .min(1)
+      .describe("With create_repo: the name of the repository to create (a name, not a path).")
+      .optional(),
+    repo_description: z
+      .string()
+      .describe("With create_repo: optional description for the new repository.")
+      .optional(),
+    visibility: z
+      .enum(["private", "internal", "public"])
+      .describe(
+        "With create_repo: the repository's visibility, one of the target's allowed_visibilities. " +
+          "Defaults to private."
+      )
+      .optional(),
     workspace_name: z
       .string()
       .min(1)
@@ -300,22 +556,38 @@ export const TOOL_SHAPES = {
 export type ToolName = keyof typeof TOOL_SHAPES;
 
 export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
+  list_workspace_modules: "Read stored module references on a workspace's default branch. Returns call sites, declared and latest stable versions, freshness, and scan metadata. Follow next_cursor, including on empty filtered pages. Never starts scans, compliance, installs or upgrades. Missing, stale or incomplete scans do not prove absence. Local sources have no independent version pin. Latest stable does not establish compatibility.",
+  list_module_consumers: "Read stored references to an approved module from accessible consumer workspaces. Pass a module workspace ID from list_modules. Returns versions, freshness, call sites and per-consumer scan metadata. Follow next_cursor, including on empty filtered pages. This observed inventory is not an exhaustive search of every repository. Never starts scans, compliance, installs or upgrades.",
   list_enterprises:
     "List enterprises the caller belongs to. Use this to find an enterprise_id for list_workspaces. Each row's workspace_count only counts STANDARD-kind workspaces — pass kinds: ['STANDARD','TEMPLATE','MODULE'] on list_workspaces if that number doesn't match what you see there.",
   list_workspaces:
-    "List workspaces you have access to in an enterprise. Each workspace includes its linked repo if any. Use this to find workspace IDs. Defaults to STANDARD-kind workspaces only — pass kinds to include template and/or module workspaces too.",
+    "List workspaces you have access to in an enterprise. Each workspace includes its linked repo if any. Use this to find workspace IDs. Defaults to STANDARD-kind workspaces only — pass kinds to include template and/or module workspaces too. One call returns at most 100 rows and there is no cursor: when `truncated` is true the enterprise has more, so find a specific workspace with slug, or with get_workspace_context and its repo_url or workspace_id, rather than assuming it is missing.",
   get_workspace_context:
-    "Start here before writing or changing any IaC. Returns workspace identity, applicable rulesets, coding guidelines, latest compliance state, and a module catalog summary. Call it with no arguments to auto-detect the repo from the client's workspace root or the server's working directory (the result then carries resolved_repo_url and resolved_from), or pass repo_url (the git remote) or workspace_id. `status` is one of: linked (context returned), unlinked (no workspace governs this repo, so no rules are in force: do not write IaC yet; follow `message`, then call plan_workspace_setup), no_access (a workspace exists but you cannot see it; do not imply it is missing), or ambiguous (the repo matches workspaces in several enterprises; pick from `candidates` and call again with workspace_id). Every non-linked status includes a `message` saying what to do next.",
+    "Start here before writing or changing any IaC. Returns workspace identity, applicable rulesets, coding guidelines, latest compliance state, and a module catalog summary. Call it with no arguments to auto-detect the repo from the client's workspace root or the server's working directory (the result then carries resolved_repo_url and resolved_from), or pass repo_url (the git remote) or workspace_id. `status` is one of: linked (context returned), unlinked (no workspace governs this repo, but the enterprise's drafting context is returned: when can_generate is true write against `rulesets` and `coding_guidelines` and offer plan_workspace_setup so pushes get checked; when selection_required is true follow `message` first), needs_enterprise (ask the user which of `enterprises` to draft for, then call again with enterprise_id), no_access (a workspace exists but you cannot see it; do not imply it is missing), or ambiguous (the repo matches workspaces in several enterprises; pick from `candidates` and call again with workspace_id). Every non-linked status includes a `message` saying what to do next. With no git remote at all (an empty repo) the enterprise context is still returned, with repo_detection saying why. The rulesets and latest compliance state are scoped to a branch: explicit `branch`, else the checked-out branch of a checkout of this repo (reported as resolved_branch; branch_detection says why none was used and the default branch answered). On a feature branch they come from its latest completed check. Read `coverage.rulesets_source`: `workspace_settings` means no check is visible on the branch yet, and when `coverage.discovery` is automatic a full check will evaluate more rulesets than are listed, so never present the list as the complete set of rules that apply.",
+  get_build_rules:
+    "Read the rules of optional rulesets you selected for an unlinked repo, without reloading the whole context. Use it when get_workspace_context came back unlinked with selection_required: pick the relevant entries from its available_rulesets (rule_titles summarize each), then call this with setup.enterprise_id and the chosen ruleset_ids (an empty list if none fit). Only the selected rulesets come back; the required ones are already in the context's `rulesets`. The response's `setup` carries the required plus selected ids to pass to setup_workspace once the repo is linked. Read-only; changes no workspace settings.",
   get_ruleset_details:
-    "Load the full text of every rule in a single ruleset. Returns rule id, title, full content, required flag, enabled flag, and order. Includes disabled rules (enabled: false) so you can see the whole catalog, not just what's currently active — filter on `enabled` if you only want the rules actually being evaluated.",
+    "Load the full text of every rule in a single ruleset. Returns rule id, title, full content, required flag, enabled flag, and order. Includes disabled rules (enabled: false) so you can see the whole catalog, not just what's currently active — filter on `enabled` if you only want the rules actually being evaluated. Rule bodies are long: pass detail: 'summary' to get ids, titles, and flags without them.",
   list_workspace_rulesets:
-    "List every ruleset relevant to a workspace — including enterprise rulesets that exist in the catalog but this workspace hasn't opted into. Each row has `effective_enabled` (is it actually active here) and `workspace_setting` (the workspace's stored opinion, null if it's never opted in/out). Use this when you notice code introducing a resource type or concern that isn't covered by any currently-active ruleset, to check whether a relevant one already exists but just isn't attached — then offer to attach it via update_workspace_resources rather than assuming none exists. Only enterprise rulesets that are enabled and not required can be attached this way; required ones are already active regardless.",
+    "List every ruleset relevant to a workspace — including enterprise rulesets that exist in the catalog but this workspace hasn't opted into. Each row has `effective_enabled` (is it actually active here) and `workspace_setting` (the workspace's stored opinion, null if it's never opted in/out). Use this when you notice code introducing a resource type or concern that isn't covered by any currently-active ruleset, to check whether a relevant one already exists but just isn't attached — then offer to attach it via update_workspace_resources rather than assuming none exists. Only enterprise rulesets that are enabled and not required can be attached this way; required ones are already active regardless. On a branch, `evaluated_on_branch` (from that branch's latest completed check) is what actually applied there; `effective_enabled` is only the workspace's settings. Under automatic discovery those differ, so answer 'which rulesets apply on this branch' from evaluated_on_branch and the response's `branch` block.",
   get_compliance_evaluation:
-    "Return the summary of a compliance evaluation for this workspace. With no ref, returns the latest evaluation, scoped to branch if given. Call it once to check the current state; a still-running evaluation comes back with a `next` field, and you should never call this in a loop to wait for it. The response includes a `url` to the results page — share it with the user rather than only reporting the score inline.",
+    "Return the summary of a compliance evaluation for this workspace. With no ref, returns the latest evaluation, scoped to branch if given. Call it once to check the current state; a still-running evaluation comes back with a `next` field, and you should never call this in a loop to wait for it. The response includes a `url` to the results page — share it with the user rather than only reporting the score inline. With no ref or branch, the checked-out branch of a checkout of this workspace's repo is used and reported as resolved_branch; private Work checks from conversations you have access to count, as on every branch-scoped read. A `found: false` names the branch and means no check is visible there, not that the workspace has no evaluations.",
+  wait_for_compliance_evaluation:
+    "Wait for a compliance evaluation to finish and return its result, in one call. Use it right after trigger_compliance_evaluation (pass the run's id as ref) when the user wants the outcome without having to ask again. The waiting happens inside this tool: it checks the server about every 20 seconds and sends progress notifications, so never poll, sleep, or loop around it yourself. In Claude Code a call that runs past two minutes moves to a background task and the result arrives as a task notification while the user keeps working; other clients may block on it, so only call this when the user wants to wait, and prefer sharing `url` when they do not. Returns the completed evaluation (score, result, counts, url) with a `next` field, or, if the run is still going when max_wait_minutes (25 at most) is reached, the running evaluation with `url` and a `next` saying to share it and stop. The run keeps going on the server either way.",
   trigger_compliance_evaluation:
     "Start a compliance evaluation of the code already pushed to the linked branch. The platform never sees your local tree: commit and push first, or the run scores stale code while the result looks valid. Pass ref as the branch name you pushed (e.g. 'main'); never omit it (that evaluates a possibly stale checkout) and never pass a bare SHA (it records no branch). Often no manual full run is needed: with CI compliance enabled, a push to the default branch or to a branch with an open pull request auto-runs a full evaluation. After pushing, call get_compliance_evaluation once; if a run for your commit already exists, trigger only a scoped re-check (rule_ids, rule_id, or ruleset_id) for the rules you fixed. Trigger a full run yourself only when no auto-run applies, at most once per task. If the server folds your scoped request into an already-running full run, the response has deduped: true with requested_scope and effective_scope; that is not an error. The call returns immediately with the queued run, a results `url`, and a `next` field telling you what to do: share the url with the user and stop. Never poll, sleep, or estimate how long it will take.",
   list_compliance_findings:
-    "Return the per-rule findings from a compliance evaluation. With no ref, uses the workspace's latest completed evaluation.",
+    "Return the per-rule findings from a compliance evaluation. With no ref, uses the workspace's latest completed evaluation. Each finding's `exception` gives the workspace's current exception on the rule, if any. Only `active` is in force: `stale` no longer applies, and `pending` is a request awaiting review. Returns at most `limit` findings (default 100) and reports `findings_total` and `truncated` when more exist; narrow with status or ruleset_id. detail: 'summary' drops the long text fields for a quick survey.",
+  list_compliance_exceptions:
+    "List a workspace's compliance exceptions: active ones, stale ones (granted against rule text that has since changed, so no longer in force), and open requests waiting on an approver. Use it to see what's already covered before submitting, or, for an approver, to review what's waiting.",
+  submit_compliance_exceptions:
+    "Submit exceptions for failing rules the code can't or shouldn't fix. Only use this after remediation is exhausted and the user has agreed to the list you showed them. By default every user, approvers included, creates requests that a compliance approver reviews; nothing changes until one is approved. Set grant: true only when the user has explicitly said to grant rather than request. A grant takes effect immediately for the whole workspace with no review, and before sending it you must tell the user which rules will stop being enforced and for how long and get an explicit yes. Required rules can't carry an exception. Needs the user's own sign-in or personal access token; enterprise access tokens are refused.",
+  approve_compliance_exception:
+    "Approve an open exception request (compliance approvers only). Approval is final: the rule stops counting against the score on the whole workspace immediately, until revoked or expired. Call list_compliance_exceptions first, then tell the user which rule, the exception type, the justification, the expiry, and who requested it, say that it takes effect immediately, and get an explicit yes. Never approve on your own initiative.",
+  reject_compliance_exception:
+    "Reject an open exception request (compliance approvers only), with a reason the requester will see. Confirm with the user before calling.",
+  revoke_compliance_exception:
+    "End an exception that's in force (compliance approvers only). The rule counts against the score again immediately, which can fail the compliance check on open pull requests that still violate it. Confirm with the user before calling.",
   get_compliance_eval_spec:
     "Return the system prompt and conventions our CI compliance evaluator uses.",
   list_enterprise_resources:
@@ -323,15 +595,15 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   list_modules:
     "Discover approved company modules before writing or extending infrastructure. Each module includes source_url (underlying VCS repository), registry_source, source_kind, and versions. Versions are the Git tags in the module's own repository, with their recorded commits; latest_version is the highest stable semantic version. Write the source that source_kind names: for a registry source use registry_source and drop a leading v from the tag for version; for a Git source use source_url with the exact tag as the ref. Do not substitute the VCS URL for a linked registry module, and do not invent a version. Before using inputs and outputs, read the exact chosen version from the repository at that tag or its registry entry, never main. Check versions_status before choosing a version: only ok is a complete list; syncing, stale and error are not empty catalogs. Catalog queries read stored data and never refresh upstream, so do not repeatedly poll; last_synced_at reports freshness. Versions include historical tags even if they disappear upstream; version_revisions records tag-to-commit bindings, so use the recorded commit when inspecting a historical version.",
   list_vcs_connections:
-    "Return the version-control connections (GitHub, GitLab, …) configured for an enterprise, each with its provider, host, and account. Use a connection's id with list_vcs_repos and when linking a repo.",
+    "Return the version-control connections (GitHub, GitLab, …) configured for an enterprise, each with its provider, host, account, the repository visibilities the enterprise allows there, and `repository_creation`: whether you can create a repository through it (available), or the one reason you cannot (connect_personal_account, personal_account_mismatch, insufficient_scope, not_permitted, unsupported_provider, user_context_required). Repositories are only ever created as the user with their own connected account, never with the enterprise connection, so a provider without that flow is unsupported_provider: the user creates the repo there and links it. Use a connection's id with list_vcs_repos and when linking a repo.",
   list_vcs_repos:
     "Return repositories accessible via a version-control connection — same shape for every provider. Each repo's `path` is the full provider path (GitLab subgroups included); pass it verbatim as repo_path when linking.",
   plan_workspace_setup:
-    "Read-only. Works out everything needed to bring an unlinked repo under governance in one call: resolves the repo (auto-detected when repo_url is omitted), finds the enterprise and version-control connection that can see it, checks for a workspace that already owns it, lists unlinked workspaces the repo could join, and lists the enterprise's rulesets with the required ones pre-selected. Makes no changes. `status` is ready (a `proposed` plan plus `decisions_needed`), needs_decision (several enterprises or connections can see the repo: ask the user, then call again with enterprise_id and connection_id), repo_not_found (no connection can see the repo: it may not exist yet, or the connection lacks access), or already_linked. Show the user the plan and get their answer to each decision before calling setup_workspace.",
+    "Read-only. Works out everything needed to bring a repo under governance in one call: resolves the repo (auto-detected when repo_url is omitted), finds the enterprise and version-control connection that can see it, checks for a workspace that already owns it, lists unlinked workspaces the repo could join, and lists the enterprise's rulesets with the required ones pre-selected. Makes no changes. `status` is ready (a `proposed` plan plus `decisions_needed`), needs_decision (several enterprises or connections can see the repo: ask the user, then call again with enterprise_id and connection_id), already_linked, or one of two 'the repo does not exist yet' answers: no_remote (this directory has no git remote) and repo_not_found (no connection can see the repo). Both carry `targets`: every connected account the repository could be created under (for repo_not_found, only accounts matching the remote's owner, so no duplicate is created elsewhere), each with `repository_creation` and a `create` instruction. A target marked available is one infracodebase can create itself, as the user, through setup_workspace with create_repo; any other target tells you what the user must do first (connect their own account on the provider, get the integrations permission, use a read-and-write personal token, or create the repo in the provider with their own credentials and push); the target's `create.instructions` says which. Repositories are never created with the enterprise connection. One target settles the choice; several become a `target` decision: ask, then call again with enterprise_id, connection_id, and repo_name. A detection failure (git missing or refusing the directory) is an error asking for repo_url, never a plan to create. Show the user the plan and get their answer to each decision before calling setup_workspace.",
   setup_workspace:
-    "Apply a plan from plan_workspace_setup after the user has confirmed it. Either creates a workspace (workspace_name + ruleset_ids) linked to the repo, or links the repo to an existing unlinked workspace (existing_workspace_id) and attaches ruleset_ids to it, then reloads the workspace context so you can write against the rules immediately. Check the result: repository_linked false means the workspace exists but the link failed (see repository_error); a `warning` means the link succeeded but the delivery webhook did not register, so pushes will NOT trigger compliance until the repo is re-linked. Relay both to the user; never report an unqualified success over them. Do not call this until the user has confirmed the plan.",
+    "Apply a plan from plan_workspace_setup after the user has confirmed it. Either creates a workspace (workspace_name + ruleset_ids) linked to the repo, or links the repo to an existing unlinked workspace (existing_workspace_id) and attaches ruleset_ids to it, then reloads the workspace context so you can write against the rules immediately. With create_repo (plus repo_name, and optionally visibility and repo_description; omit repo_path and branch, the created repository decides them) it first creates the repository on the plan's connection as the user, with their own connected account, then links its default branch; the result's `repository` carries the clone_url, and `next` says how to point the local checkout at it. Only for a target whose repository_creation is available: the server refuses any other status (unsupported provider, missing permission, read-only token, enterprise token, unconnected account) and names the fix. If the repository is created but a later step fails, the result is repository_created_but_setup_failed with `repository`: link it as `next` says; never pass create_repo again for it. Check the result: repository_linked false means the workspace exists but the link failed (see repository_error); a `warning` means the link succeeded but the delivery webhook did not register, so pushes will NOT trigger compliance until the repo is re-linked. Relay both to the user; never report an unqualified success over them. Do not call this until the user has confirmed the plan.",
   create_workspace:
-    "Create a workspace with optional rulesets, MCP servers, and workflows. For a repo that came back unlinked, prefer plan_workspace_setup + setup_workspace, which do the lookups below for you. Call list_enterprise_resources first. To also link a repo, pass connection_id + repo_path + branch (from list_vcs_connections / list_vcs_repos). A repo links to at most one workspace, so first confirm with list_workspaces that no workspace already owns this repo — if one does, attach rulesets to it with update_workspace_resources instead of creating a second workspace, since the link here would fail. This tool links an existing repo; it does not create one on the provider — the repo must already exist there (create it with the provider's CLI, e.g. gh or glab, if it doesn't). IMPORTANT: check `repository_linked` in the result whenever you request a link — false means the workspace exists but the link failed (see repository_error). A `warning` means the repo linked but its delivery webhook couldn't be registered, so pushes will NOT trigger compliance until it's re-linked — surface both to the user, never report an unqualified success over them.",
+    "Create a workspace with optional rulesets, MCP servers, and workflows. For a repo that came back unlinked, prefer plan_workspace_setup + setup_workspace, which do the lookups below for you. Call list_enterprise_resources first. To also link a repo, pass connection_id + repo_path + branch (from list_vcs_connections / list_vcs_repos). A repo links to at most one workspace, so first confirm with list_workspaces that no workspace already owns this repo — if one does, attach rulesets to it with update_workspace_resources instead of creating a second workspace, since the link here would fail. This tool links an existing repo; it does not create one on the provider. For a repo that does not exist yet, use plan_workspace_setup: it says which connected accounts could hold it and whether setup_workspace can create it there as the user with their own connected account (GitHub today) or whether the user must create it with their own provider credentials first. IMPORTANT: check `repository_linked` in the result whenever you request a link — false means the workspace exists but the link failed (see repository_error). A `warning` means the repo linked but its delivery webhook couldn't be registered, so pushes will NOT trigger compliance until it's re-linked — surface both to the user, never report an unqualified success over them.",
   link_workspace_to_repo:
     "Link a workspace to a repo (any provider) for compliance evaluations on push. IMPORTANT: a `warning` in the result means the repo linked but its delivery webhook couldn't be registered, so pushes will NOT trigger compliance until it's re-linked — surface it to the user, never report an unqualified success over it.",
   update_workspace_resources:
@@ -367,19 +639,42 @@ export const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
   list_enterprises: readOnly("List enterprises"),
   list_workspaces: readOnly("List workspaces"),
   get_workspace_context: readOnly("Get workspace context"),
+  get_build_rules: readOnly("Get build rules"),
   get_ruleset_details: readOnly("Get ruleset details"),
   list_workspace_rulesets: readOnly("List workspace rulesets"),
   get_compliance_evaluation: readOnly("Get compliance evaluation"),
+  wait_for_compliance_evaluation: readOnly("Wait for compliance evaluation"),
   list_compliance_findings: readOnly("List compliance findings"),
   get_compliance_eval_spec: readOnly("Get compliance evaluator spec"),
+  list_compliance_exceptions: readOnly("List compliance exceptions"),
   list_enterprise_resources: readOnly("List enterprise resources"),
   list_modules: readOnly("List approved modules"),
+  list_workspace_modules: readOnly("List workspace module references"),
+  list_module_consumers: readOnly("List module consumers"),
   list_vcs_connections: readOnly("List version-control connections"),
   list_vcs_repos: readOnly("List repositories"),
   plan_workspace_setup: readOnly("Plan workspace setup"),
   // Creates records but never removes or replaces any.
   trigger_compliance_evaluation: writes("Trigger compliance evaluation", {
     destructive: false,
+    idempotent: false,
+  }),
+  // Requests change nothing live; a grant waives a rule.
+  submit_compliance_exceptions: writes("Submit compliance exceptions", {
+    destructive: true,
+    idempotent: false,
+  }),
+  // Waives a rule for the workspace.
+  approve_compliance_exception: writes("Approve compliance exception", {
+    destructive: true,
+    idempotent: false,
+  }),
+  reject_compliance_exception: writes("Reject compliance exception", {
+    destructive: false,
+    idempotent: false,
+  }),
+  revoke_compliance_exception: writes("Revoke compliance exception", {
+    destructive: true,
     idempotent: false,
   }),
   create_workspace: writes("Create workspace", { destructive: false, idempotent: false }),

@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { readFileSync } from "fs";
-import { InfracodebaseClient, ApiError, formatApiError } from "./client.js";
+import {
+  InfracodebaseClient,
+  ApiError,
+  ApiTimeoutError,
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  formatApiError,
+} from "./client.js";
 
 /**
  * These tests exercise the one piece of real logic that touches the actual
@@ -44,6 +50,20 @@ afterEach(() => {
 });
 
 describe("InfracodebaseClient — request plumbing", () => {
+  it("encodes module inventory filters and keeps consumer reads separate", async () => {
+    const fetchMock = stubFetch(jsonResponse({data: [], next_cursor: null}));
+    const client = new InfracodebaseClient({baseUrl: "https://api.example.com", token: "t"});
+    await client.listWorkspaceModules("e", "w", {query: "network.tf & queue", cursor: "opaque/+", limit: 1, status: "updates"});
+    const url = new URL(lastCall(fetchMock).url);
+    expect(url.pathname).toBe("/enterprises/e/workspaces/w/modules");
+    expect(url.searchParams.get("query")).toBe("network.tf & queue");
+    expect(url.searchParams.get("cursor")).toBe("opaque/+");
+    fetchMock.mockClear();
+    fetchMock.mockResolvedValue(jsonResponse({data: []}));
+    await client.listModuleConsumers("e", "m");
+    expect(lastCall(fetchMock).url).toBe("https://api.example.com/enterprises/e/workspaces/m/module-consumers");
+    expect(lastCall(fetchMock).init.method).toBe("GET");
+  });
   it("strips a trailing slash from baseUrl when building the URL", async () => {
     const fetchMock = stubFetch(jsonResponse({ data: [] }));
     const client = new InfracodebaseClient({ baseUrl: "https://api.example.com/", token: "t" });
@@ -147,6 +167,21 @@ describe("InfracodebaseClient — request plumbing", () => {
     expect(init.body).toBe(JSON.stringify({ name: "infra" }));
   });
 
+  it("creates a repository through a connection with a POST to its repos collection", async () => {
+    const fetchMock = stubFetch(jsonResponse({ path: "acme/svc", clone_url: "https://x/acme/svc.git" }));
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+
+    const out = await client.createVcsRepository("ent_1", "conn_1", { name: "svc", visibility: "private" });
+
+    const { url, init } = lastCall(fetchMock);
+    expect(url).toBe(
+      "https://api.example.com/enterprises/ent_1/integrations/vcs/connections/conn_1/repos"
+    );
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ name: "svc", visibility: "private" }));
+    expect(out.clone_url).toBe("https://x/acme/svc.git");
+  });
+
   it("returns the parsed JSON body on a 2xx", async () => {
     stubFetch(jsonResponse({ data: [{ id: "ent_1" }] }));
     const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
@@ -203,6 +238,100 @@ describe("InfracodebaseClient — query/path building", () => {
     expect(lastCall(fetchMock).url).toBe("https://api.example.com/workspace-context");
   });
 
+  it("builds /build-context with every selector, and sends an empty ruleset_ids to select none", async () => {
+    const fetchMock = stubFetch(jsonResponse({}));
+    fetchMock.mockImplementation(async () => jsonResponse({}));
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+
+    await client.getBuildContext({
+      repoUrl: "https://github.com/acme/infra",
+      enterpriseId: "ent_1",
+      rulesetIds: ["rs_a", "rs_b"],
+      iacTool: "terraform",
+      branch: "feature/x",
+    });
+    expect(lastCall(fetchMock).url).toBe(
+      "https://api.example.com/build-context?repo_url=https%3A%2F%2Fgithub.com%2Facme%2Finfra" +
+        "&enterprise_id=ent_1&ruleset_ids=rs_a%2Crs_b&iac_tool=terraform&branch=feature%2Fx"
+    );
+
+    // The API reads an empty ruleset_ids as "none selected", which is not the
+    // same as omitting it (that leaves selection_required open).
+    fetchMock.mockClear();
+    await client.getBuildContext({ rulesetIds: [] });
+    expect(lastCall(fetchMock).url).toBe("https://api.example.com/build-context?ruleset_ids=");
+
+    fetchMock.mockClear();
+    await client.getBuildContext({});
+    expect(lastCall(fetchMock).url).toBe("https://api.example.com/build-context");
+  });
+
+  it("builds /build-rules with the enterprise and the selected ruleset ids", async () => {
+    const fetchMock = stubFetch(jsonResponse({}));
+    fetchMock.mockImplementation(async () => jsonResponse({}));
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+
+    await client.getBuildRules("ent_1", ["rs_a"]);
+    expect(lastCall(fetchMock).url).toBe(
+      "https://api.example.com/build-rules?enterprise_id=ent_1&ruleset_ids=rs_a"
+    );
+
+    fetchMock.mockClear();
+    await client.getBuildRules("ent_1", []);
+    expect(lastCall(fetchMock).url).toBe(
+      "https://api.example.com/build-rules?enterprise_id=ent_1&ruleset_ids="
+    );
+  });
+
+  it("returns undefined for a no-content decision instead of parsing an empty body", async () => {
+    const fetchMock = stubFetch(new Response(null, { status: 204 }));
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+
+    await expect(
+      client.approveComplianceException("ent_1", "ws_1", "rule_1")
+    ).resolves.toBeUndefined();
+    const { url, init } = lastCall(fetchMock);
+    expect(url).toBe(
+      "https://api.example.com/enterprises/ent_1/workspaces/ws_1/compliance/exceptions/rule_1/approve"
+    );
+    expect(init.method).toBe("POST");
+  });
+
+  it("sends exception submissions, rejections, and revocations to the exceptions resource", async () => {
+    const fetchMock = stubFetch(jsonResponse({}));
+    fetchMock.mockImplementation(async (_url, init: RequestInit) =>
+      init.method === "POST" && String(_url).endsWith("/exceptions")
+        ? jsonResponse({ state: "pending" }, 202)
+        : new Response(null, { status: 204 })
+    );
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+    const base = "https://api.example.com/enterprises/ent_1/workspaces/ws_1/compliance/exceptions";
+
+    await client.submitComplianceException("ent_1", "ws_1", {
+      rule_id: "rule_1",
+      type: "not_applicable",
+      justification: "Set per subscription.",
+    });
+    expect(lastCall(fetchMock).url).toBe(base);
+    expect(JSON.parse(lastCall(fetchMock).init.body as string)).toEqual({
+      rule_id: "rule_1",
+      type: "not_applicable",
+      justification: "Set per subscription.",
+    });
+
+    fetchMock.mockClear();
+    await client.rejectComplianceException("ent_1", "ws_1", "rule_1", "Fix it instead.");
+    expect(lastCall(fetchMock).url).toBe(`${base}/rule_1/reject`);
+    expect(JSON.parse(lastCall(fetchMock).init.body as string)).toEqual({
+      reason: "Fix it instead.",
+    });
+
+    fetchMock.mockClear();
+    await client.revokeComplianceException("ent_1", "ws_1", "rule_1");
+    expect(lastCall(fetchMock).url).toBe(`${base}/rule_1`);
+    expect(lastCall(fetchMock).init.method).toBe("DELETE");
+  });
+
   it("hits the /latest evaluation when no ref is given, else the ref path", async () => {
     const fetchMock = stubFetch(jsonResponse({}));
     fetchMock.mockImplementation(async () => jsonResponse({})); // fresh body per call
@@ -251,6 +380,42 @@ describe("InfracodebaseClient — query/path building", () => {
     });
   });
 
+  it("uses the exception endpoints and accepts their no-content decisions", async () => {
+    const fetchMock = stubFetch(jsonResponse({ data: [] }));
+    fetchMock.mockImplementationOnce(async () => jsonResponse({ data: [] }));
+    fetchMock.mockImplementationOnce(async () => jsonResponse({ state: "pending" }, 202));
+    fetchMock.mockImplementationOnce(async () => new Response(null, { status: 204 }));
+    fetchMock.mockImplementationOnce(async () => new Response(null, { status: 204 }));
+    fetchMock.mockImplementationOnce(async () => new Response(null, { status: 204 }));
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+
+    await client.listComplianceExceptions("ent_1", "ws_1");
+    await client.submitComplianceException("ent_1", "ws_1", {
+      rule_id: "rule_1",
+      type: "risk_acceptance",
+      justification: "The user explicitly accepted this temporary risk.",
+    });
+    await client.approveComplianceException("ent_1", "ws_1", "rule/1");
+    await client.rejectComplianceException("ent_1", "ws_1", "rule/1", "Needs a remediation plan.");
+    await client.revokeComplianceException("ent_1", "ws_1", "rule/1");
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "https://api.example.com/enterprises/ent_1/workspaces/ws_1/compliance/exceptions",
+      "https://api.example.com/enterprises/ent_1/workspaces/ws_1/compliance/exceptions",
+      "https://api.example.com/enterprises/ent_1/workspaces/ws_1/compliance/exceptions/rule%2F1/approve",
+      "https://api.example.com/enterprises/ent_1/workspaces/ws_1/compliance/exceptions/rule%2F1/reject",
+      "https://api.example.com/enterprises/ent_1/workspaces/ws_1/compliance/exceptions/rule%2F1",
+    ]);
+    expect((fetchMock.mock.calls[1][1] as RequestInit).body).toBe(
+      JSON.stringify({
+        rule_id: "rule_1",
+        type: "risk_acceptance",
+        justification: "The user explicitly accepted this temporary risk.",
+      })
+    );
+    expect((fetchMock.mock.calls[4][1] as RequestInit).method).toBe("DELETE");
+  });
+
   it("requests specific workspace kinds via a comma-separated query param", async () => {
     const fetchMock = stubFetch(jsonResponse({ data: [] }));
     const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
@@ -281,6 +446,23 @@ describe("InfracodebaseClient — query/path building", () => {
 
     expect(lastCall(fetchMock).url).toBe(
       "https://api.example.com/enterprises/ent_1/workspaces/ws_1/rulesets"
+    );
+  });
+
+  it("encodes the branch on the rulesets list and the workspace context", async () => {
+    const fetchMock = stubFetch(jsonResponse({ data: [] }));
+    fetchMock.mockImplementation(async () => jsonResponse({ data: [] }));
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+
+    await client.listWorkspaceRulesets("ent_1", "ws_1", "feature/x");
+    expect(lastCall(fetchMock).url).toBe(
+      "https://api.example.com/enterprises/ent_1/workspaces/ws_1/rulesets?branch=feature%2Fx"
+    );
+
+    fetchMock.mockClear();
+    await client.resolveWorkspaceContext({ workspaceId: "ws_1", branch: "feature/x" });
+    expect(lastCall(fetchMock).url).toBe(
+      "https://api.example.com/workspace-context?workspace_id=ws_1&branch=feature%2Fx"
     );
   });
 
@@ -500,5 +682,85 @@ describe("ApiError — message formatting", () => {
     expect(err.code).toBe("ruleset_not_found");
     expect(err.requestId).toBe("req_1");
     expect(err.status).toBe(404);
+  });
+});
+
+describe("InfracodebaseClient — request timeout", () => {
+  /** A fetch that never answers on its own and rejects the way the real one does when its signal fires. */
+  function stubHangingFetch() {
+    const fetchMock = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init.signal!.addEventListener("abort", () => reject(init.signal!.reason));
+        })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("hands every request a timeout signal, and a fast response is unaffected", async () => {
+    const fetchMock = stubFetch(jsonResponse({ data: [] }));
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+
+    await expect(client.listEnterprises()).resolves.toEqual({ data: [] });
+
+    expect(lastCall(fetchMock).init.signal).toBeInstanceOf(AbortSignal);
+    expect(lastCall(fetchMock).init.signal!.aborted).toBe(false);
+  });
+
+  it("fails with a readable error naming the request when the API does not answer in time", async () => {
+    stubHangingFetch();
+    const client = new InfracodebaseClient({
+      baseUrl: "https://api.example.com",
+      token: "t",
+      requestTimeoutMs: 20,
+    });
+
+    const err = await client.listEnterprises().catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ApiTimeoutError);
+    expect((err as Error).message).toContain("did not answer within 20ms");
+    expect((err as Error).message).toContain("GET https://api.example.com/enterprises");
+    expect(err).toMatchObject({ method: "GET", timeoutMs: 20 });
+  });
+
+  it("defaults to 30 seconds and lets one call override it", async () => {
+    expect(DEFAULT_REQUEST_TIMEOUT_MS).toBe(30_000);
+    const fetchMock = stubHangingFetch();
+    const client = new InfracodebaseClient({ baseUrl: "https://api.example.com", token: "t" });
+
+    // Reach into the private request helper to prove the per-call override wins.
+    const request = (client as unknown as { request: Function }).request.bind(client);
+    const err = await request("GET", "/me", { timeoutMs: 20 }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ApiTimeoutError);
+    expect(err).toMatchObject({ timeoutMs: 20 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives the 401 refresh retry its own deadline", async () => {
+    const fetchMock = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((resolve, reject) => {
+          init.signal!.addEventListener("abort", () => reject(init.signal!.reason));
+          if (fetchMock.mock.calls.length === 1) {
+            resolve(jsonResponse({ error: "unauthorized" }, 401));
+          }
+          // The retry hangs, so it must time out on its own signal.
+        })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new InfracodebaseClient({
+      baseUrl: "https://api.example.com",
+      getAccessToken: async () => "access",
+      requestTimeoutMs: 20,
+    });
+
+    const err = await client.listEnterprises().catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ApiTimeoutError);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const signals = fetchMock.mock.calls.map((c) => (c[1] as RequestInit).signal);
+    expect(signals[0]).not.toBe(signals[1]);
   });
 });

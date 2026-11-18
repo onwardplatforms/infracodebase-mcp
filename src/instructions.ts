@@ -1,23 +1,32 @@
 /**
  * Server instructions handed to every MCP client at initialize.
  *
- * Keep this SHORT. Clients cap what the model actually sees: Claude Code
- * displayed roughly the first 1,850 characters of the previous 9,850-character
- * version, cutting it off inside step 2 of a 7-step recipe, so most of the
- * protocol never reached the agent. Behavioural guidance now lives in tool
- * responses (`message`, `next`, `decisions_needed`), which are never truncated
- * and can change without a client upgrade. `instructions.test.ts` enforces the
- * budget below.
+ * With tool search on (the Claude Code default), only tool names and these
+ * instructions load at session start. Tool descriptions arrive later, when
+ * the model searches for them. So this text has one job first: say when to
+ * reach for this server at all. Protocol the agent must follow step by step
+ * still lives in tool responses (`message`, `next`, `decisions_needed`),
+ * which are never truncated and change without a client upgrade.
+ *
+ * Claude Code cuts server instructions at 4,096 characters since v2.1.296
+ * (2,048 before that) and the model sees nothing past the cut. The budget
+ * below leaves headroom under that limit; `instructions.test.ts` enforces it.
  */
-export const SERVER_INSTRUCTIONS_BUDGET = 1800;
+export const SERVER_INSTRUCTIONS_BUDGET = 3800;
 
-export const SERVER_INSTRUCTIONS = `Before writing or changing any infrastructure-as-code (Terraform, Pulumi, CloudFormation, Bicep, Kubernetes, Helm, Ansible), including bootstrapping IaC in an empty repo, call get_workspace_context first, on every IaC turn. It says whether this repo is governed by infracodebase and which rulesets and coding guidelines apply. Compliance gates here are mandatory, not advisory: the job is to deliver the change and prove it complies, not to finish quickly.
+export const SERVER_INSTRUCTIONS = `Use this server for anything that touches infrastructure-as-code or its governance: Terraform, Pulumi, CloudFormation, Bicep, Kubernetes, Helm, Ansible, compliance scores and findings, rulesets and coding guidelines, approved modules, compliance exceptions, and bringing a repo under infracodebase. Search for its tools whenever the user mentions any of those, even in an empty repo.
 
-Read the returned status:
-- linked: you hold the rulesets and guidelines. Write against them.
-- unlinked: no rules are in force yet. Do not write IaC. Call plan_workspace_setup (read-only), ask the user the question in \`message\` using the plan's options, and call setup_workspace only after they answer. Then reload the context.
-- no_access or ambiguous: follow \`message\`.
+Before writing or changing any IaC, call get_workspace_context first, on every IaC turn. It says whether infracodebase governs this repo and which rulesets and coding guidelines apply. Compliance gates are mandatory, not advisory. Deliver the change and prove it complies, rather than finishing quickly.
 
-Compliance evaluations run against code pushed to the linked branch, never your local tree. Commit and push first, pass \`ref\` as the branch name, and prefer scoped runs: a push to the default branch or to a branch with an open pull request already auto-runs a full evaluation. Trigger results carry a \`url\` and a \`next\` field. Share the url with the user and stop; never poll, sleep, or estimate how long a run will take.
+Read the returned status.
+- linked: write against the rulesets and guidelines. They are scoped to the detected branch. On a feature branch they come from its latest completed check, and \`coverage.rulesets_source: workspace_settings\` under automatic discovery means a full check evaluates more rulesets than listed, so never call the list complete.
+- unlinked: not governed yet, but drafting context is returned. If can_generate is true, write against its rulesets and guidelines, say pushes are unchecked, and offer plan_workspace_setup then setup_workspace once they answer. Otherwise follow \`message\` (it may ask for a ruleset selection via get_build_rules) before writing IaC.
+- needs_enterprise, no_access or ambiguous: follow \`message\`.
 
-Always relay a \`warning\` or \`repository_error\` from create, link, or setup results: they mean pushes will not trigger compliance until the repo is re-linked.`;
+Other entry points. list_modules finds approved modules before you write new infrastructure. list_workspace_modules reads default-branch module references; list_module_consumers reads their inverse usage. These are stored scans, not your local checkout. Check scan age and coverage and follow next_cursor, even on empty filtered pages. list_compliance_findings shows per-rule results, and get_ruleset_details the full rule text. list_workspace_rulesets finds a relevant ruleset the workspace has not attached yet. A response that needs a follow-up carries a \`next\` or \`message\` field. Do what it says.
+
+Evaluations run against pushed code, never your local tree. Commit and push first, pass \`ref\` as the branch name, and prefer scoped runs (rule_ids, rule_id, or ruleset_id). A push to the default branch or to a branch with an open pull request already runs a full evaluation, so call get_compliance_evaluation once before triggering one yourself. Trigger results carry a \`url\` and a \`next\` field. Share the url with the user and stop. Never poll, sleep, or estimate run time. When the user wants the outcome without returning later, call wait_for_compliance_evaluation once; it waits server-side.
+
+For failures the code can't or shouldn't fix, offer exceptions. Show the user each rule's type (risk_acceptance or not_applicable) and justification, and call submit_compliance_exceptions only after they agree. It requests review by default. Grant only when the user explicitly says grant. Approving, rejecting, or revoking an exception needs the user's explicit yes each time.
+
+Always relay a \`warning\` or \`repository_error\` from create, link, or setup results. Pushes will not trigger compliance until the repo is re-linked.`;

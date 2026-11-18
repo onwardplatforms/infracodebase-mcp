@@ -1,5 +1,16 @@
 import { describe, it, expect, vi } from "vitest";
-import { createRepoResolver } from "./repo-detect.js";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  createBranchResolver,
+  createRepoResolver,
+  gitBranchName,
+  gitRemoteUrl,
+  parseRemoteRef,
+  remoteMatchesRepo,
+} from "./repo-detect.js";
 
 function deps(overrides: Partial<Parameters<typeof createRepoResolver>[0]> = {}) {
   return {
@@ -91,5 +102,190 @@ describe("createRepoResolver", () => {
     await expect(createRepoResolver(d)()).rejects.toThrow(
       "Could not detect a git remote (checked: /Users/ada/infra, /work/project). Pass repo_url"
     );
+  });
+});
+
+describe("branch detection", () => {
+  it("attaches the checked-out branch of the directory the remote came from", async () => {
+    const d = deps({
+      gitRemote: vi.fn(async () => "https://github.com/acme/infra"),
+      gitBranch: vi.fn(async (dir) => (dir === "/work/project" ? "feature/x" : null)),
+    });
+
+    expect(await createRepoResolver(d)()).toEqual({
+      repo_url: "https://github.com/acme/infra",
+      resolved_from: "cwd",
+      branch: "feature/x",
+    });
+  });
+
+  it("omits the branch on a detached HEAD and never probes one for an explicit repo_url", async () => {
+    const detached = deps({
+      gitRemote: vi.fn(async () => "https://github.com/acme/infra"),
+      gitBranch: vi.fn(async () => null),
+    });
+    expect(await createRepoResolver(detached)()).toEqual({
+      repo_url: "https://github.com/acme/infra",
+      resolved_from: "cwd",
+    });
+
+    const explicit = deps({ gitBranch: vi.fn(async () => "feature/x") });
+    expect(await createRepoResolver(explicit)("acme/infra")).toEqual({
+      repo_url: "acme/infra",
+      resolved_from: "argument",
+    });
+    expect(explicit.gitBranch).not.toHaveBeenCalled();
+  });
+
+  it("resolves a branch alone: explicit wins, then a client root, then cwd, else null", async () => {
+    const d = deps({
+      listRoots: vi.fn(async () => ["file:///Users/ada/infra"]),
+      gitBranch: vi.fn(async (dir) =>
+        dir === "/Users/ada/infra" ? "feature/root" : dir === "/work/project" ? "feature/cwd" : null
+      ),
+    });
+    const resolve = createBranchResolver(d);
+
+    expect(await resolve("main")).toEqual({ branch: "main", resolved_from: "argument" });
+    expect(await resolve()).toEqual({ branch: "feature/root", resolved_from: "roots" });
+
+    const cwdOnly = createBranchResolver(deps({ gitBranch: vi.fn(async () => "feature/cwd") }));
+    expect(await cwdOnly()).toEqual({ branch: "feature/cwd", resolved_from: "cwd" });
+
+    const nothing = createBranchResolver(deps({ gitBranch: vi.fn(async () => null) }));
+    expect(await nothing()).toEqual({ branch: null, reason: "no_checkout" });
+    expect(await createBranchResolver(deps())()).toEqual({ branch: null, reason: "no_checkout" });
+  });
+
+  it("with a repo to match, ignores checkouts of other repos and says so", async () => {
+    const d = deps({
+      listRoots: vi.fn(async () => ["file:///Users/ada/other", "file:///Users/ada/infra"]),
+      gitRemote: vi.fn(async (dir) =>
+        dir === "/Users/ada/other"
+          ? "git@github.com:acme/other.git"
+          : dir === "/Users/ada/infra"
+            ? "https://github.com/Acme/Infra"
+            : null
+      ),
+      gitBranch: vi.fn(async (dir) =>
+        dir === "/Users/ada/other" ? "feature/other" : dir === "/Users/ada/infra" ? "feature/infra" : null
+      ),
+    });
+    const resolve = createBranchResolver(d);
+
+    expect(await resolve(undefined, { repo: { owner: "acme", name: "infra" } })).toEqual({
+      branch: "feature/infra",
+      resolved_from: "roots",
+    });
+    expect(await resolve(undefined, { repo: { owner: "acme", name: "payments" } })).toEqual({
+      branch: null,
+      reason: "other_repo",
+    });
+    // Without a repo to match, the first checkout wins as before.
+    expect(await resolve()).toEqual({ branch: "feature/other", resolved_from: "roots" });
+    // Meaning to match a repo but not knowing it is not the same as not caring:
+    // the first checkout could belong to any project.
+    const probes = d.gitBranch.mock.calls.length;
+    expect(await resolve(undefined, { repo: null })).toEqual({ branch: null, reason: "repo_unknown" });
+    expect(d.gitBranch.mock.calls.length).toBe(probes);
+  });
+
+  it("parses remotes the way the platform stores them, keeping nested paths", () => {
+    expect(parseRemoteRef("https://github.com/Acme/Infra.git")).toEqual({
+      host: "github.com",
+      owner: "Acme",
+      name: "Infra",
+      displayPath: "Acme/Infra",
+    });
+    expect(parseRemoteRef("git@gitlab.com:group/subgroup/project.git")).toEqual({
+      host: "gitlab.com",
+      owner: "group/subgroup",
+      name: "project",
+      displayPath: "group/subgroup/project",
+    });
+    expect(parseRemoteRef("https://acme@dev.azure.com/acme/Platform/_git/infra")).toEqual({
+      host: "dev.azure.com",
+      owner: "acme/Platform",
+      name: "infra",
+      displayPath: "acme/Platform/infra",
+    });
+    expect(parseRemoteRef("git@ssh.dev.azure.com:v3/acme/Platform/infra")).toMatchObject({
+      host: "dev.azure.com",
+      displayPath: "acme/Platform/infra",
+    });
+    expect(parseRemoteRef("ssh://git@ghe.acme.com:2222/owner/repo.git")).toMatchObject({
+      host: "ghe.acme.com",
+      displayPath: "owner/repo",
+    });
+    expect(parseRemoteRef("acme/infra")).toMatchObject({ host: "github.com", displayPath: "acme/infra" });
+    expect(parseRemoteRef("not a remote")).toBeNull();
+  });
+
+  it("matches on the full display path when the server sends one, else on owner and name", () => {
+    const nested = {
+      owner: "group/subgroup",
+      name: "project",
+      host: "gitlab.com",
+      display_path: "group/subgroup/project",
+    };
+    expect(remoteMatchesRepo("git@gitlab.com:group/subgroup/project.git", nested)).toBe(true);
+    expect(remoteMatchesRepo("git@gitlab.com:other/subgroup/project.git", nested)).toBe(false);
+    expect(remoteMatchesRepo("git@github.com:group/subgroup/project.git", nested)).toBe(false);
+    expect(remoteMatchesRepo("git@github.com:acme/infra.git", { owner: "Acme", name: "Infra" })).toBe(true);
+    expect(remoteMatchesRepo("git@github.com:acme/infra.git", { owner: "acme", name: "other" })).toBe(false);
+    expect(remoteMatchesRepo("git@github.com:acme/infra.git", null)).toBe(false);
+    expect(remoteMatchesRepo("git@github.com:acme/infra.git", { owner: "acme" })).toBe(false);
+  });
+});
+
+describe("gitBranchName against a real checkout", () => {
+  /** A throwaway repo on branch `fix` with one commit, no remotes yet. */
+  function tempRepo() {
+    const dir = mkdtempSync(join(tmpdir(), "icb-branch-"));
+    const run = (...args: string[]) =>
+      execFileSync(
+        "git",
+        ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args],
+        { stdio: "pipe" }
+      );
+    run("init", "-q", "-b", "fix");
+    run("commit", "-q", "--allow-empty", "-m", "init");
+    return { dir, run, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  }
+
+  it("reports the upstream name only when it is on the remote the repo is identified by", async () => {
+    const { dir, run, cleanup } = tempRepo();
+    try {
+      expect(await gitBranchName(dir)).toBe("fix");
+
+      run("remote", "add", "origin", "https://github.com/acme/infra.git");
+      run("update-ref", "refs/remotes/origin/jo/fix", "HEAD");
+      run("branch", "--set-upstream-to=origin/jo/fix");
+      expect(await gitRemoteUrl(dir)).toBe("https://github.com/acme/infra.git");
+      expect(await gitBranchName(dir)).toBe("jo/fix");
+
+      // A fork workflow: the branch tracks the fork, but the checkout is
+      // identified by origin, so the fork's branch name would be the wrong one.
+      run("remote", "add", "fork", "https://github.com/jo/infra.git");
+      run("update-ref", "refs/remotes/fork/jo-fix", "HEAD");
+      run("branch", "--set-upstream-to=fork/jo-fix");
+      expect(await gitRemoteUrl(dir)).toBe("https://github.com/acme/infra.git");
+      expect(await gitBranchName(dir)).toBe("fix");
+
+      // With no origin, the first remote identifies the checkout, and an
+      // upstream on it counts.
+      run("remote", "remove", "origin");
+      expect(await gitRemoteUrl(dir)).toBe("https://github.com/jo/infra.git");
+      expect(await gitBranchName(dir)).toBe("jo-fix");
+
+      // "First" is the first `git remote` lists, alphabetically: a remote that
+      // sorts before the one the branch tracks takes over, and the upstream
+      // name is ignored again.
+      run("remote", "add", "aaa", "https://github.com/aaa/infra.git");
+      expect(await gitRemoteUrl(dir)).toBe("https://github.com/aaa/infra.git");
+      expect(await gitBranchName(dir)).toBe("fix");
+    } finally {
+      cleanup();
+    }
   });
 });

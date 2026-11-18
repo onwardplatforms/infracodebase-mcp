@@ -12,7 +12,17 @@ export interface ClientConfig {
   token?: string;
   getAccessToken?: AccessTokenProvider;
   authKind?: "oauth" | "legacy_token";
+  /**
+   * How long one API request may take before it is abandoned, in
+   * milliseconds. Defaults to {@link DEFAULT_REQUEST_TIMEOUT_MS}. Without a
+   * bound, a stalled connection holds the tool call open until the MCP client
+   * gives up on it, which can be hours.
+   */
+  requestTimeoutMs?: number;
 }
+
+/** The default bound on a single API request. */
+export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
 /** Shape of GET /me. Older self-hosted instances may lack the endpoint. */
 export interface Identity {
@@ -22,10 +32,37 @@ export interface Identity {
   enterprises: Array<{ id?: string; name?: string; slug?: string }>;
 }
 
+/**
+ * The most workspaces one list call can return (the API's maximum page size).
+ * A page this full may be truncated, since the API has no cursor to continue.
+ */
+export const WORKSPACE_PAGE_LIMIT = 100;
+
+export interface ModuleInventoryOptions {
+  limit?: number;
+  cursor?: string;
+  status?: "all" | "updates" | "current" | "unassessed";
+  query?: string;
+}
+
+/** Shape of POST .../integrations/vcs/connections/{id}/repos. */
+export interface CreatedVcsRepository {
+  provider: string;
+  /** Full provider path; pass it verbatim as repo_path when linking. */
+  path: string;
+  name: string;
+  default_branch: string;
+  visibility: string;
+  web_url: string;
+  /** What to `git remote add origin`. */
+  clone_url: string;
+}
+
 export class InfracodebaseClient {
   private baseUrl: string;
   private getAccessToken: AccessTokenProvider;
   private authKind: "oauth" | "legacy_token";
+  private requestTimeoutMs: number;
 
   constructor(config: ClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, ""); // Remove trailing slash
@@ -34,6 +71,7 @@ export class InfracodebaseClient {
     }
     this.getAccessToken = config.getAccessToken ?? (async () => config.token as string);
     this.authKind = config.authKind ?? (config.token ? "legacy_token" : "oauth");
+    this.requestTimeoutMs = config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   }
 
   /**
@@ -44,25 +82,39 @@ export class InfracodebaseClient {
     path: string,
     options?: {
       body?: unknown;
+      /** The endpoint answers 204 with no body (approve, reject, revoke). */
+      noContent?: boolean;
+      /** Override the client's request timeout for this one call. */
+      timeoutMs?: number;
     }
   ): Promise<T> {
     const url = `${this.baseUrl}${path}`;
-    const send = (token: string) =>
-      fetch(url, {
-        method,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-          "User-Agent": `@infracodebase/mcp/${VERSION}`,
-        },
-        body: options?.body ? JSON.stringify(options.body) : undefined,
-      });
+    const timeoutMs = options?.timeoutMs ?? this.requestTimeoutMs;
+    // Each attempt gets its own deadline, so the 401 retry below is not
+    // charged for the time the first attempt spent.
+    const send = async (token: string) => {
+      try {
+        return await fetch(url, {
+          method,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+            "User-Agent": `@infracodebase/mcp/${VERSION}`,
+          },
+          body: options?.body ? JSON.stringify(options.body) : undefined,
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+      } catch (err) {
+        if (isTimeout(err)) throw new ApiTimeoutError(method, url, timeoutMs);
+        throw err;
+      }
+    };
 
     const token = await this.getAccessToken();
     let response = await send(token);
     // A login token can be refused before its saved expiry, for example when
-    // this computer's clock runs behind. Refresh once and retry before telling
-    // the user to sign in again.
+    // this computer's clock runs behind. Refresh once before surfacing an
+    // authentication failure; a personal access token is never retried.
     if (response.status === 401 && this.authKind === "oauth") {
       response = await send(await this.getAccessToken({ rejected: token }));
     }
@@ -72,6 +124,7 @@ export class InfracodebaseClient {
       throw new ApiError(response.status, errorText, path, this.baseUrl, this.authKind);
     }
 
+    if (options?.noContent) return undefined as T;
     return (await response.json()) as T;
   }
 
@@ -116,27 +169,84 @@ export class InfracodebaseClient {
     repoUrl?: string;
     workspaceId?: string;
     iacTool?: string;
+    /** Scope rulesets and the latest evaluation to this branch's last completed check. */
+    branch?: string;
   }) {
     const query = new URLSearchParams();
     if (params.repoUrl) query.set("repo_url", params.repoUrl);
     if (params.workspaceId) query.set("workspace_id", params.workspaceId);
     if (params.iacTool) query.set("iac_tool", params.iacTool);
+    if (params.branch) query.set("branch", params.branch);
     const qs = query.toString();
 
     return this.request<unknown>("GET", `/workspace-context${qs ? `?${qs}` : ""}`);
+  }
+
+  /**
+   * Drafting context that does not require a linked workspace. With a repo
+   * that no workspace governs (or with no selector at all) it answers with the
+   * enterprise's required rulesets, coding guidelines, and module catalog, plus
+   * `can_generate`, `selection_required`, and `available_rulesets` for the
+   * optional rulesets the agent may add. `rulesetIds` resolves that selection
+   * (an empty array selects none). Older self-hosted servers answer 404.
+   */
+  async getBuildContext(params: {
+    repoUrl?: string;
+    workspaceId?: string;
+    enterpriseId?: string;
+    rulesetIds?: string[];
+    iacTool?: string;
+    branch?: string;
+  }) {
+    const query = new URLSearchParams();
+    if (params.repoUrl) query.set("repo_url", params.repoUrl);
+    if (params.workspaceId) query.set("workspace_id", params.workspaceId);
+    if (params.enterpriseId) query.set("enterprise_id", params.enterpriseId);
+    if (params.rulesetIds) query.set("ruleset_ids", params.rulesetIds.join(","));
+    if (params.iacTool) query.set("iac_tool", params.iacTool);
+    if (params.branch) query.set("branch", params.branch);
+    const qs = query.toString();
+    return this.request<unknown>("GET", `/build-context${qs ? `?${qs}` : ""}`);
+  }
+
+  /**
+   * The rules of selected optional rulesets in an enterprise, without
+   * reloading the rest of the drafting context. Required rulesets are already
+   * in the build context, so only the selected ones come back, plus the
+   * `setup` ids (required and selected) to carry into setup_workspace.
+   */
+  async getBuildRules(enterpriseId: string, rulesetIds: string[]) {
+    const query = new URLSearchParams({ enterprise_id: enterpriseId });
+    query.set("ruleset_ids", rulesetIds.join(","));
+    return this.request<unknown>("GET", `/build-rules?${query.toString()}`);
   }
 
   async listEnterprises() {
     return this.request<{ data: Array<unknown> }>("GET", "/enterprises");
   }
 
-  async listWorkspaces(enterpriseId: string, kinds?: string[]) {
-    const query = new URLSearchParams({ limit: "100" });
+  /**
+   * One page of an enterprise's workspaces. The API has no cursor yet: it
+   * returns at most `limit` rows (WORKSPACE_PAGE_LIMIT at most) and says
+   * nothing about the rest, so a full page may be a truncated list.
+   */
+  async listWorkspaces(
+    enterpriseId: string,
+    kinds?: string[],
+    options?: { limit?: number; slug?: string }
+  ) {
+    const query = new URLSearchParams({ limit: String(options?.limit ?? WORKSPACE_PAGE_LIMIT) });
     if (kinds?.length) query.set("kinds", kinds.join(","));
+    if (options?.slug) query.set("slug", options.slug);
     return this.request<{ data: Array<unknown> }>(
       "GET",
       `/enterprises/${enterpriseId}/workspaces?${query}`
     );
+  }
+
+  /** One workspace: identity and linked repo. 404 when it is not in this enterprise; getWorkspaceRepo falls back to a scan on that. */
+  async getWorkspace(enterpriseId: string, workspaceId: string) {
+    return this.request<unknown>("GET", `/enterprises/${enterpriseId}/workspaces/${workspaceId}`);
   }
 
   async createWorkspace(enterpriseId: string, body: unknown) {
@@ -161,11 +271,15 @@ export class InfracodebaseClient {
    * null if it's never opted in/out) and `effective_enabled` (the computed
    * active state). Use this to find a ruleset that exists in the enterprise
    * catalog but isn't currently active for this workspace.
+   *
+   * With `branch`, rows carry `evaluated_on_branch` from that branch's latest
+   * visible check and the response adds a `branch` block naming the evaluation.
    */
-  async listWorkspaceRulesets(enterpriseId: string, workspaceId: string) {
-    return this.request<{ data: Array<unknown> }>(
+  async listWorkspaceRulesets(enterpriseId: string, workspaceId: string, branch?: string) {
+    return this.request<{ data: Array<unknown>; branch?: unknown }>(
       "GET",
-      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/rulesets`
+      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/rulesets` +
+        (branch ? `?branch=${encodeURIComponent(branch)}` : "")
     );
   }
 
@@ -220,19 +334,86 @@ export class InfracodebaseClient {
   async listComplianceFindings(
     enterpriseId: string,
     workspaceId: string,
-    params?: { ref?: string; status?: string }
+    params?: { ref?: string; status?: string; ruleset_id?: string }
   ) {
     // Findings are nested under an evaluation. A ref (evaluation id or commit
     // SHA) targets that evaluation; with no ref we hit the `latest` alias,
     // which the API resolves to the latest completed evaluation server-side —
     // one request either way, no client-side id resolution.
     const evalRef = params?.ref ? encodeURIComponent(params.ref) : "latest";
-    const query = params?.status ? `?status=${encodeURIComponent(params.status)}` : "";
+    const query = new URLSearchParams();
+    if (params?.status) query.set("status", params.status);
+    if (params?.ruleset_id) query.set("ruleset_id", params.ruleset_id);
+    const qs = query.toString();
     const path =
       `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/evaluations/${evalRef}/findings` +
-      query;
+      (qs ? `?${qs}` : "");
 
     return this.request<unknown>("GET", path);
+  }
+
+  /** Active exceptions and open requests for a workspace. */
+  async listComplianceExceptions(enterpriseId: string, workspaceId: string) {
+    return this.request<{ data: unknown[] }>(
+      "GET",
+      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/exceptions`
+    );
+  }
+
+  /**
+   * Request an exception (the default), or grant one with mode "grant". The
+   * server refuses a grant from anyone without compliance approve permission
+   * rather than downgrading it to a request.
+   */
+  async submitComplianceException(
+    enterpriseId: string,
+    workspaceId: string,
+    body: {
+      rule_id: string;
+      type: "risk_acceptance" | "not_applicable";
+      justification: string;
+      expires_in_days?: number;
+      evaluation_id?: string;
+      mode?: "request" | "grant";
+    }
+  ) {
+    return this.request<{
+      rule_id: string;
+      rule_title: string;
+      state: "active" | "pending";
+      request_number: number | null;
+    }>("POST", `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/exceptions`, {
+      body,
+    });
+  }
+
+  async approveComplianceException(enterpriseId: string, workspaceId: string, ruleId: string) {
+    await this.request<void>(
+      "POST",
+      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/exceptions/${encodeURIComponent(ruleId)}/approve`,
+      { noContent: true }
+    );
+  }
+
+  async rejectComplianceException(
+    enterpriseId: string,
+    workspaceId: string,
+    ruleId: string,
+    reason: string
+  ) {
+    await this.request<void>(
+      "POST",
+      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/exceptions/${encodeURIComponent(ruleId)}/reject`,
+      { body: { reason }, noContent: true }
+    );
+  }
+
+  async revokeComplianceException(enterpriseId: string, workspaceId: string, ruleId: string) {
+    await this.request<void>(
+      "DELETE",
+      `/enterprises/${enterpriseId}/workspaces/${workspaceId}/compliance/exceptions/${encodeURIComponent(ruleId)}`,
+      { noContent: true }
+    );
   }
 
   async getComplianceEvalSpec(enterpriseId: string, workspaceId: string) {
@@ -252,6 +433,38 @@ export class InfracodebaseClient {
 
   async listModules(enterpriseId: string) {
     return this.request<unknown>("GET", `/enterprises/${enterpriseId}/modules`);
+  }
+
+  async listWorkspaceModules(
+    enterpriseId: string,
+    workspaceId: string,
+    options: ModuleInventoryOptions = {},
+  ) {
+    return this.readModuleInventory(enterpriseId, workspaceId, "modules", options);
+  }
+
+  async listModuleConsumers(
+    enterpriseId: string,
+    moduleId: string,
+    options: ModuleInventoryOptions = {},
+  ) {
+    return this.readModuleInventory(enterpriseId, moduleId, "module-consumers", options);
+  }
+
+  private readModuleInventory(
+    enterpriseId: string,
+    workspaceId: string,
+    resource: "modules" | "module-consumers",
+    options: ModuleInventoryOptions,
+  ) {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(options)) {
+      if (value !== undefined) query.set(key, String(value));
+    }
+    return this.request<unknown>(
+      "GET",
+      `/enterprises/${encodeURIComponent(enterpriseId)}/workspaces/${encodeURIComponent(workspaceId)}/${resource}${query.size ? `?${query}` : ""}`,
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -276,6 +489,21 @@ export class InfracodebaseClient {
       `/enterprises/${enterpriseId}/integrations/vcs/connections/${connectionId}/repos` + query;
 
     return this.request<unknown>("GET", path);
+  }
+
+  /** Create a repository on a connection's provider as the signed-in person
+   *  (their own connected account, never the enterprise connection). The
+   *  server refuses providers without a personal connect flow. */
+  async createVcsRepository(
+    enterpriseId: string,
+    connectionId: string,
+    body: { name: string; description?: string; visibility?: string; project?: string }
+  ) {
+    return this.request<CreatedVcsRepository>(
+      "POST",
+      `/enterprises/${enterpriseId}/integrations/vcs/connections/${connectionId}/repos`,
+      { body }
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -330,6 +558,41 @@ export class InfracodebaseClient {
 // Errors
 // -----------------------------------------------------------------------------
 
+/** fetch rejects with the signal's reason, a DOMException named TimeoutError. */
+function isTimeout(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    ((err as { name?: string }).name === "TimeoutError" ||
+      (err as { name?: string }).name === "AbortError")
+  );
+}
+
+/**
+ * The API did not answer in time. Carries the request so the message says
+ * which call stalled, and the bound so the fix (a slow instance, a proxy that
+ * holds connections, or a timeout set too low) is obvious.
+ */
+export class ApiTimeoutError extends Error {
+  constructor(
+    public method: string,
+    public url: string,
+    public timeoutMs: number
+  ) {
+    super(
+      `The API did not answer within ${formatDuration(timeoutMs)}: ${method} ${url}. ` +
+        "The instance may be down or slow; check the API URL and try again."
+    );
+    this.name = "ApiTimeoutError";
+  }
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const s = ms / 1000;
+  return `${Number.isInteger(s) ? s : s.toFixed(1)}s`;
+}
+
 /** The documented v1 error envelope (lib/api/v1/primitives.ts ErrorResponse). */
 interface ApiErrorBody {
   type?: string;
@@ -383,6 +646,13 @@ function hintFor(
       : `This token is read-only. Creating or linking workspaces and attaching rulesets need a "Read and write" token from ${origin}/settings/tokens; ask the user to create one and update INFRACODEBASE_TOKEN.`;
   }
   if (status === 429) return "Rate limited. Wait before retrying.";
+  if (status >= 500) {
+    return (
+      "The server failed before answering. Quote the request_id to support. If this call created " +
+      "something (a repository, a workspace), check whether it exists before retrying, so the retry " +
+      "links it instead of creating it again."
+    );
+  }
   return null;
 }
 
@@ -420,7 +690,9 @@ export function formatApiError(
 }
 
 export class ApiError extends Error {
-  /** Stable machine-readable code from the API envelope, when the body was JSON. */
+  /** True when the body was the API's JSON envelope (a `message` string), as opposed to a proxy page or plain text. */
+  public envelope: boolean;
+  /** Stable machine-readable code from the envelope, when the body was one and it carried a code. */
   public code?: string;
   public requestId?: string;
 
@@ -434,6 +706,7 @@ export class ApiError extends Error {
     super(formatApiError(status, body, path, baseUrl, authKind));
     this.name = "ApiError";
     const parsed = parseErrorBody(body);
+    this.envelope = parsed !== null;
     this.code = parsed?.code;
     this.requestId = parsed?.request_id;
   }
