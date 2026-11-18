@@ -336,7 +336,9 @@ describe("operating systems", () => {
     ["linux", {}, [".config", "devin"]],
     ["linux", { xdgConfigHome: "xdg" }, ["xdg", "devin"]],
     ["darwin", { xdgConfigHome: "xdg" }, ["xdg", "devin"]],
-    ["win32", { appData: "ignored" }, ["AppData", "Roaming", "devin"]],
+    // A redirected roaming profile: %APPDATA% is not under the home folder.
+    ["win32", { appData: "redirected-roaming" }, ["redirected-roaming", "devin"]],
+    ["win32", {}, ["AppData", "Roaming", "devin"]],
   ] as const)(
     "writes Devin Desktop's config where Devin reads it on %s %o",
     async (platform, overrides, segments) => {
@@ -362,6 +364,13 @@ describe("operating systems", () => {
       });
     }
   );
+
+  it("warns that Devin Desktop won't read a Windsurf config it just wrote", async () => {
+    const home = await temporaryHome();
+    const result = await findClient("windsurf")!.install(fakeEnv(home), launch);
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain("Devin Desktop doesn't read this file");
+  });
 
   it("reads Codex and Claude Code config from CODEX_HOME and CLAUDE_CONFIG_DIR when set", async () => {
     const home = await temporaryHome();

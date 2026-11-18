@@ -60,8 +60,8 @@ Other clients take this entry in their MCP config file:
 | Cursor | `~/.cursor/mcp.json` |
 | VS Code | User `mcp.json` (**MCP: Open User Configuration**); the key is `servers` and the entry adds `"type": "stdio"` |
 | Claude Desktop | `claude_desktop_config.json` (**Settings → Developer → Edit Config**) |
-| Windsurf | `~/.codeium/windsurf/mcp_config.json` |
-| Devin Desktop | `~/.config/devin/mcp_config.json` (Windows: `%USERPROFILE%\AppData\Roaming\devin\mcp_config.json`) |
+| Windsurf (before Devin Desktop) | `~/.codeium/windsurf/mcp_config.json`; Devin Desktop doesn't read it |
+| Devin Desktop | `~/.config/devin/mcp_config.json` (Windows: `%APPDATA%\devin\mcp_config.json`) |
 
 <details>
 <summary>Devin in the cloud</summary>
