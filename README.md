@@ -4,7 +4,7 @@
 [![node](https://img.shields.io/node/v/@infracodebase/mcp)](https://nodejs.org)
 [![license](https://img.shields.io/npm/l/@infracodebase/mcp)](https://github.com/onwardplatforms/infracodebase-mcp/blob/main/LICENSE)
 
-Give your AI coding agent access to [infracodebase](https://infracodebase.com) compliance, rulesets, and governance. This MCP server works with Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, Codex CLI, Devin, and any other MCP client that can launch a stdio server.
+Give your AI coding agent access to [infracodebase](https://infracodebase.com) compliance, rulesets, and governance. This MCP server works with Claude Code, Claude Desktop, Cursor, VS Code, Codex CLI, Devin, and any other MCP client that can launch a stdio server.
 
 ## Prerequisites
 
@@ -19,7 +19,7 @@ Give your AI coding agent access to [infracodebase](https://infracodebase.com) c
 npx -y @infracodebase/mcp@latest init
 ```
 
-Signs you in through your browser and adds InfraCodebase to the MCP clients on your machine: Claude Code, Cursor, VS Code, Claude Desktop, Windsurf, Devin Desktop, or Codex CLI. Safe to run again.
+Signs you in through your browser and adds InfraCodebase to the MCP clients on your machine: Claude Code, Cursor, VS Code, Claude Desktop, Devin Desktop, or Codex CLI. Safe to run again.
 
 ### Manual
 
@@ -60,7 +60,6 @@ Other clients take this entry in their MCP config file:
 | Cursor | `~/.cursor/mcp.json` |
 | VS Code | User `mcp.json` (**MCP: Open User Configuration**); the key is `servers` and the entry adds `"type": "stdio"` |
 | Claude Desktop | `claude_desktop_config.json` (**Settings → Developer → Edit Config**) |
-| Windsurf (before Devin Desktop) | `~/.codeium/windsurf/mcp_config.json`; Devin Desktop doesn't read it |
 | Devin Desktop | `~/.config/devin/mcp_config.json` (Windows: `%APPDATA%\devin\mcp_config.json`) |
 
 <details>

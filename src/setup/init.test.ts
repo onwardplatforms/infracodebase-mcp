@@ -74,14 +74,14 @@ describe("planPicker", () => {
     const plan = planPicker([
       state("claude-code", true, "missing"),
       state("cursor", true, "missing"),
-      state("windsurf", false, "missing"),
+      state("devin", false, "missing"),
     ]);
     expect(
       plan.choices.map((choice) => [choice.client.id, choice.preselected, choice.hint])
     ).toEqual([
       ["claude-code", true, "detected"],
       ["cursor", true, "detected"],
-      ["windsurf", false, undefined],
+      ["devin", false, undefined],
     ]);
     expect(plan.nothingToSuggest).toBe(false);
   });
@@ -90,10 +90,10 @@ describe("planPicker", () => {
     const plan = planPicker([
       state("claude-code", true, "current"),
       state("cursor", true, "current"),
-      state("windsurf", false, "missing"),
+      state("devin", false, "missing"),
     ]);
     expect(plan.current.map((client) => client.id)).toEqual(["claude-code", "cursor"]);
-    expect(plan.choices.map((choice) => choice.client.id)).toEqual(["windsurf"]);
+    expect(plan.choices.map((choice) => choice.client.id)).toEqual(["devin"]);
     expect(plan.nothingToSuggest).toBe(true);
   });
 

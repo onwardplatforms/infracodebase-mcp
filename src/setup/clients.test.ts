@@ -289,7 +289,6 @@ describe("operating systems", () => {
       "claude-code",
       "cursor",
       "vscode",
-      "windsurf",
       "devin",
       "codex",
     ]);
@@ -364,13 +363,6 @@ describe("operating systems", () => {
       });
     }
   );
-
-  it("warns that Devin Desktop won't read a Windsurf config it just wrote", async () => {
-    const home = await temporaryHome();
-    const result = await findClient("windsurf")!.install(fakeEnv(home), launch);
-    expect(result.ok).toBe(true);
-    expect(result.detail).toContain("Devin Desktop doesn't read this file");
-  });
 
   it("reads Codex and Claude Code config from CODEX_HOME and CLAUDE_CONFIG_DIR when set", async () => {
     const home = await temporaryHome();

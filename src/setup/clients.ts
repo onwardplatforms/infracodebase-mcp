@@ -171,10 +171,10 @@ export function appConfigDir(env: SetupEnv): string {
 }
 
 /**
- * Devin's own config folder, shared by Devin Desktop (formerly Windsurf) and the
- * Devin CLI. Unlike appConfigDir it uses ~/.config on macOS too. On Windows it
- * is %APPDATA%\devin, falling back to Roaming under the home folder only when
- * APPDATA is unset, since a redirected roaming profile moves %APPDATA%.
+ * Devin's own config folder, shared by Devin Desktop and the Devin CLI. Unlike
+ * appConfigDir it uses ~/.config on macOS too. On Windows it is %APPDATA%\devin,
+ * falling back to Roaming under the home folder only when APPDATA is unset,
+ * since a redirected roaming profile moves %APPDATA%.
  */
 export function devinConfigDir(env: SetupEnv): string {
   if (env.platform === "win32")
@@ -243,8 +243,6 @@ function jsonClient(options: {
   configFile: (env: SetupEnv) => string;
   key: string;
   entry: (launch: ServerLaunch) => Record<string, unknown>;
-  /** Appended to a successful result, for caveats about where the client reads config. */
-  note?: string;
 }): McpClient {
   return {
     id: options.id,
@@ -261,10 +259,9 @@ function jsonClient(options: {
         return {
           ok: true,
           detail:
-            (outcome === "unchanged"
+            outcome === "unchanged"
               ? `already set up in ${tildify(env, file)}`
-              : `${outcome === "created" ? "added to" : "updated in"} ${tildify(env, file)}`) +
-            (options.note ? `. ${options.note}` : ""),
+              : `${outcome === "created" ? "added to" : "updated in"} ${tildify(env, file)}`,
           restart: outcome !== "unchanged",
         };
       } catch (error) {
@@ -402,18 +399,7 @@ export const CLIENTS: McpClient[] = [
     key: "mcpServers",
     entry: (launch) => ({ command: launch.command, args: launch.args }),
   }),
-  jsonClient({
-    id: "windsurf",
-    // Devin Desktop replaced Windsurf and no longer reads this file.
-    label: "Windsurf (before Devin Desktop)",
-    installDir: (env) => path.join(env.home, ".codeium", "windsurf"),
-    configFile: (env) => path.join(env.home, ".codeium", "windsurf", "mcp_config.json"),
-    key: "mcpServers",
-    entry: (launch) => ({ command: launch.command, args: launch.args }),
-    note: "Devin Desktop doesn't read this file; if you've updated, set up Devin Desktop instead",
-  }),
-  // Devin Desktop (formerly Windsurf) reads MCP servers from Devin's own
-  // config folder, not ~/.codeium/windsurf.
+  // Devin Desktop reads MCP servers from Devin's own config folder.
   jsonClient({
     id: "devin",
     label: "Devin Desktop",
