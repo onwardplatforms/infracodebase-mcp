@@ -270,6 +270,14 @@ async function refreshCredentialWithRetry(
 }
 
 /**
+ * Browser login only works where the browser and server share a machine. Cloud
+ * agents such as Devin run the server on their own VM, so point them at a token.
+ */
+function missingLoginMessage(origin: string, apiUrl: string): string {
+  return `No InfraCodebase login found for ${origin}. Run \`infracodebase login --api-url ${apiUrl}\` on this machine. In a cloud agent such as Devin, set INFRACODEBASE_TOKEN to a personal access token from ${origin}/settings/tokens instead.`;
+}
+
+/**
  * Hand out the saved access token, refreshing it when it is about to expire.
  * Pass `rejected` with a token the API just refused to refresh even though its
  * expiry looks fine, for example when this computer's clock runs behind.
@@ -293,7 +301,7 @@ export function createStoredOAuthTokenProvider(
     if (!initial) {
       throw new AuthSessionError(
         "missing",
-        `No InfraCodebase login found for ${origin}. Run \`infracodebase login --api-url ${apiUrl}\`.`
+        missingLoginMessage(origin, apiUrl)
       );
     }
     if (isCurrent(initial, rejected)) return initial.accessToken;
@@ -304,7 +312,7 @@ export function createStoredOAuthTokenProvider(
       if (!current) {
         throw new AuthSessionError(
           "missing",
-          `No InfraCodebase login found for ${origin}. Run \`infracodebase login --api-url ${apiUrl}\`.`
+          missingLoginMessage(origin, apiUrl)
         );
       }
       // Another process may have refreshed while this one waited for the lock.
