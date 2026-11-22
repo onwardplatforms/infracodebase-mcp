@@ -397,7 +397,7 @@ export async function logout(apiUrl: string, options: OAuthOptions = {}): Promis
   });
 }
 
-async function launchBrowser(url: string): Promise<void> {
+export async function launchBrowser(url: string): Promise<void> {
   const [command, args] =
     process.platform === "darwin"
       ? ["open", [url]]

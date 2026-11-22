@@ -338,6 +338,20 @@ describe("plan_workspace_setup — the repository does not exist yet", () => {
     expect(result.next).toContain("gh repo create acme/svc --private");
   });
 
+  it("hands over the direct connect link when the server provides one", async () => {
+    const url = "https://infracodebase.com/api/github/oauth/authorize?return_url=%2Fsettings%2Fconnections";
+    const client = enterpriseClient([
+      { ...creatable("conn_1", "acme", "connect_personal_account"), connect_url: url },
+    ]);
+
+    const result = (await planWorkspaceSetup.run(mockContext({ client }), {
+      repo_name: "svc",
+    })) as any;
+
+    expect(result.next).toContain(`connect it at ${url}`);
+    expect(result.next).not.toContain("Settings → Connections");
+  });
+
   it("turns several possible homes into a target decision, preferring ones infracodebase can create through", async () => {
     const client = enterpriseClient([
       creatable("conn_1"),

@@ -8,7 +8,13 @@ import os from "node:os";
 import { styleText } from "node:util";
 import * as prompts from "@clack/prompts";
 import { ApiError, InfracodebaseClient, type Identity } from "../client.js";
-import { AuthSessionError, createStoredOAuthTokenProvider, login } from "../oauth.js";
+import {
+  AuthSessionError,
+  createStoredOAuthTokenProvider,
+  launchBrowser,
+  login,
+} from "../oauth.js";
+import { offerVcsConnections } from "./vcs-connect.js";
 import { enterpriseLabel, settleEnterprise, type EnterpriseRow } from "../enterprise-choice.js";
 import {
   clientsFor,
@@ -130,7 +136,8 @@ export async function askEnterprise(
   return rows.find((row) => row.id === picked) ?? null;
 }
 
-async function chooseEnterprise(apiUrl: string): Promise<void> {
+/** Settle the enterprise and report it. Returns its id, or null when none is chosen. */
+async function chooseEnterprise(apiUrl: string): Promise<string | null> {
   const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
   const choice = await settleEnterprise({
     apiUrl,
@@ -142,20 +149,46 @@ async function chooseEnterprise(apiUrl: string): Promise<void> {
     case "chosen":
     case "kept":
       prompts.log.success(`Working in ${enterpriseLabel(choice.enterprise)}`, { spacing: 0 });
-      return;
+      return choice.enterprise.id;
     case "undecided":
       prompts.log.warn(
         `You belong to ${choice.count} enterprises. Run \`infracodebase enterprise use <slug>\` to choose one.`
       );
-      return;
+      return null;
     case "unavailable":
       prompts.log.warn(
         `Couldn't list your enterprises (${choice.error}). Run \`infracodebase enterprise use <slug>\` later to choose one.`
       );
-      return;
+      return null;
     case "none":
-      return;
+      return null;
   }
+}
+
+/** Offer the personal VCS connections the chosen enterprise needs. */
+async function connectVcs(options: InitOptions, enterpriseId: string): Promise<void> {
+  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  const waiting = prompts.spinner();
+  await offerVcsConnections({
+    client: identityClient(options.apiUrl),
+    enterpriseId,
+    confirm: interactive
+      ? async (message) => {
+          const answer = await prompts.confirm({ message, initialValue: true });
+          return !prompts.isCancel(answer) && answer;
+        }
+      : null,
+    open: async (url) => {
+      if (options.noOpen) prompts.log.step(`Open this URL to connect:\n${url}`);
+      else await launchBrowser(url).catch(() => prompts.log.step(`Open this URL to connect:\n${url}`));
+    },
+    log: {
+      success: (text) => prompts.log.success(text, { spacing: 0 }),
+      info: (text) => prompts.log.info(text),
+      warn: (text) => prompts.log.warn(text),
+    },
+    waiting: { start: (text) => waiting.start(text), stop: () => waiting.clear() },
+  });
 }
 
 async function signIn(options: InitOptions): Promise<Identity> {
@@ -368,7 +401,8 @@ async function setUp(options: InitOptions): Promise<void> {
 
   prompts.intro(`Infracodebase MCP setup · ${new URL(origin).host}`);
   await signIn(options);
-  await chooseEnterprise(options.apiUrl);
+  const enterpriseId = await chooseEnterprise(options.apiUrl);
+  if (enterpriseId) await connectVcs(options, enterpriseId);
 
   const { clients, alreadySetUp } = await chooseClients(env, options);
   if (clients.length === 0) {

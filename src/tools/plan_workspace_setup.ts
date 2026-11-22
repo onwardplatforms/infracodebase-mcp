@@ -53,6 +53,8 @@ interface Connection {
   /** Absent on a server that predates repository creation through the API. */
   repository_creation?: string;
   allowed_visibilities?: string[];
+  /** Where the user connects their own account; absent on older servers. */
+  connect_url?: string | null;
 }
 interface VcsRepo {
   path: string;
@@ -187,8 +189,11 @@ function creationGuidance(
     case "connect_personal_account":
       return provider(
         `infracodebase can create this repository on ${label} under ${account}, but only with the user's own ` +
-          `${label} account, which they have not connected. Tell them: connect it in infracodebase under ` +
-          `Settings → Connections and call plan_workspace_setup again, or ${locally}`
+          `${label} account, which they have not connected. Tell them: connect it ` +
+          (connection.connect_url
+            ? `at ${connection.connect_url} `
+            : "in infracodebase under Settings → Connections ") +
+          `and call plan_workspace_setup again, or ${locally}`
       );
     case "personal_account_mismatch":
       return provider(
