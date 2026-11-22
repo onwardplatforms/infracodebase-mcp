@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { InfracodebaseClient } from "../client.js";
+import { ApiError, type InfracodebaseClient } from "../client.js";
 import { missingConnections, offerVcsConnections, type ConnectionRow } from "./vcs-connect.js";
 
 const URL_GH = "https://infracodebase.example/api/github/oauth/authorize?return_url=%2Fsettings%2Fconnections";
@@ -77,6 +77,35 @@ describe("offerVcsConnections", () => {
 
     expect(d.log.warn).toHaveBeenCalledWith(expect.stringContaining(URL_GH));
     expect(d.waiting.stop).toHaveBeenCalled();
+  });
+
+  it("says why for each provider, without claiming Azure DevOps grants workspace access", async () => {
+    const confirm = vi.fn(async () => false);
+    const d = deps(
+      [
+        [
+          { provider: "github", personal_connection: "not_connected", connect_url: URL_GH },
+          { provider: "azure-devops", personal_connection: "not_connected", connect_url: "https://x/ado" },
+        ],
+      ],
+      confirm
+    );
+    await offerVcsConnections(d);
+
+    expect(confirm.mock.calls[0][0]).toContain("access to workspaces through your repository permissions");
+    expect(confirm.mock.calls[1][0]).toContain("create repositories as you");
+    expect(confirm.mock.calls[1][0]).not.toContain("workspaces");
+  });
+
+  it("warns, with the server's words, when the enterprise has no active plan", async () => {
+    const d = deps([], async () => true);
+    (d.client.listVcsConnections as ReturnType<typeof vi.fn>)
+      .mockReset()
+      .mockRejectedValue(
+        new ApiError(402, JSON.stringify({ message: "The free plan has ended." }), "/connections")
+      );
+    await offerVcsConnections(d);
+    expect(d.log.warn).toHaveBeenCalledWith("The free plan has ended.");
   });
 
   it("is silent against a server that predates personal_connection, and never fails init", async () => {

@@ -161,6 +161,9 @@ async function chooseEnterprise(apiUrl: string): Promise<string | null> {
       );
       return null;
     case "none":
+      prompts.log.warn(
+        "You aren't a member of any enterprise yet, so there are no rules to work with. Ask your enterprise admin to invite you."
+      );
       return null;
   }
 }

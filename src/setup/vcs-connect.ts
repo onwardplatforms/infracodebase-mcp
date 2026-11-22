@@ -6,7 +6,7 @@
  * finds out only when a tool fails. Always skippable, and never fails init.
  */
 
-import type { InfracodebaseClient } from "../client.js";
+import { ApiError, type InfracodebaseClient } from "../client.js";
 
 export interface ConnectionRow {
   provider: string;
@@ -23,6 +23,27 @@ const PROVIDER_LABELS: Record<string, string> = {
 
 export function providerLabel(provider: string): string {
   return PROVIDER_LABELS[provider] ?? provider;
+}
+
+/**
+ * What connecting gets the person, per provider. Only true claims: on GitHub
+ * repository permissions grant workspace access; on Azure DevOps the sign-in
+ * is only used to create repositories as the person.
+ */
+const PURPOSE: Record<string, string> = {
+  github: "gives you access to workspaces through your repository permissions",
+  "azure-devops": "lets infracodebase create repositories as you",
+};
+
+/** The server's message from an API error body, else the error's own text. */
+function apiMessage(err: ApiError): string {
+  try {
+    const body = JSON.parse(err.body) as { message?: unknown };
+    if (typeof body.message === "string") return body.message;
+  } catch {
+    // Not JSON: fall through.
+  }
+  return err.message;
 }
 
 /** One entry per provider the person can and has not yet connected. */
@@ -72,8 +93,11 @@ export async function offerVcsConnections(deps: OfferDeps): Promise<void> {
   let rows: ConnectionRow[];
   try {
     rows = await readRows(deps.client, deps.enterpriseId);
-  } catch {
-    // Listing connections needs nothing init cannot do without.
+  } catch (err) {
+    // An enterprise without an active plan (402) refuses every later tool
+    // call too, so say so now instead of finishing as if all is well. Any
+    // other failure is not worth failing init over.
+    if (err instanceof ApiError && err.status === 402) deps.log.warn(apiMessage(err));
     return;
   }
 
@@ -83,7 +107,7 @@ export async function offerVcsConnections(deps: OfferDeps): Promise<void> {
 
   for (const { provider, url } of missingConnections(rows)) {
     const label = providerLabel(provider);
-    const why = `Connecting your ${label} account gives you access to workspaces through your repository permissions.`;
+    const why = `Connecting your ${label} account ${PURPOSE[provider] ?? "lets infracodebase act as you there"}.`;
     if (!deps.confirm) {
       deps.log.info(`${why} Connect it at ${url}`);
       continue;
