@@ -10,6 +10,7 @@
  *   infracodebase start      Always start the MCP server
  *   infracodebase login      Sign in through the browser
  *   infracodebase logout     Remove the saved session for this instance
+ *   infracodebase enterprise Show or switch (`use <slug>`) the enterprise you work in
  *   infracodebase help       Show usage
  *
  * Browser login is the default. Environment variables and flags are optional:
@@ -22,7 +23,9 @@ import { InfracodebaseClient } from "./client.js";
 import { startServer } from "./server.js";
 import { buildUsage } from "./cli/usage.js";
 import { createStoredOAuthTokenProvider, login, logout } from "./oauth.js";
-import { runInit } from "./setup/init.js";
+import { askEnterprise, runInit } from "./setup/init.js";
+import { runEnterpriseCommand } from "./cli/enterprise.js";
+import { enterpriseLabel, settleEnterprise } from "./enterprise-choice.js";
 
 /** Read `--name=value` or `--name value` from argv, returning undefined if absent. */
 function readFlag(argv: string[], name: string): string | undefined {
@@ -32,6 +35,17 @@ function readFlag(argv: string[], name: string): string | undefined {
     if (arg.startsWith(`--${name}=`)) return arg.slice(name.length + 3);
   }
   return undefined;
+}
+
+/** Arguments that are not flags or a value-taking flag's value. */
+function positionalArgs(args: string[]): string[] {
+  const valued = new Set(["--api-url", "--token", "--client"]);
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (valued.has(args[i])) i++;
+    else if (!args[i].startsWith("--")) out.push(args[i]);
+  }
+  return out;
 }
 
 async function main() {
@@ -85,12 +99,25 @@ async function main() {
           onAuthorizationUrl: (url) => console.error(`Open this URL to continue:\n${url}`),
           openBrowser: noOpen ? async () => undefined : undefined,
         });
-        const me = await new InfracodebaseClient({
+        const client = new InfracodebaseClient({
           baseUrl: config.apiUrl,
           getAccessToken: createStoredOAuthTokenProvider(config.apiUrl),
           authKind: "oauth",
-        }).verifyToken();
+        });
+        const me = await client.verifyToken();
         console.error(`Signed in${me.email ? ` as ${me.email}` : ""}.`);
+        const choice = await settleEnterprise({
+          apiUrl: config.apiUrl,
+          client,
+          ask: interactive ? askEnterprise : undefined,
+        });
+        if (choice.kind === "only" || choice.kind === "chosen" || choice.kind === "kept") {
+          console.error(`Working in ${enterpriseLabel(choice.enterprise)}.`);
+        } else if (choice.kind === "undecided") {
+          console.error(
+            `You belong to ${choice.count} enterprises. Choose one with: infracodebase enterprise use <slug>`
+          );
+        }
         if (process.env.INFRACODEBASE_TOKEN) {
           console.error(
             "Warning: INFRACODEBASE_TOKEN is still set and overrides this login. Remove it from your MCP client configuration to use browser login."
@@ -117,6 +144,11 @@ async function main() {
             "\nINFRACODEBASE_TOKEN is still set in this shell. Any MCP client that uses it stays signed in until you remove it."
           );
         }
+        return;
+      }
+
+      case "enterprise": {
+        await runEnterpriseCommand(positionalArgs(argv.slice(1)), loadConfig(overrides));
         return;
       }
 

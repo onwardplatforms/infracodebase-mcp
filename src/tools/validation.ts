@@ -65,6 +65,29 @@ const iacTool = z
   .describe("Optional IaC tool to include tool-specific coding guidelines for.")
   .optional();
 
+/**
+ * enterprise_id on a read tool that lists one enterprise's resources. Optional
+ * in the schema: when omitted, the enterprise chosen at sign-in (or
+ * INFRACODEBASE_ENTERPRISE_ID) is used, and the call fails with how to choose
+ * one when there is none. Tools that write keep a required enterprise_id.
+ */
+const chosenEnterpriseFields = new WeakSet<z.ZodType>();
+function chosenEnterpriseId(description: string) {
+  const field = z
+    .string()
+    .min(1)
+    .optional()
+    .describe(`${description} Defaults to the enterprise chosen at sign-in.`);
+  chosenEnterpriseFields.add(field);
+  return field;
+}
+
+/** Whether a tool's enterprise_id falls back to the chosen enterprise. */
+export function usesChosenEnterprise(shape: Record<string, z.ZodType>): boolean {
+  const field = shape.enterprise_id;
+  return field !== undefined && chosenEnterpriseFields.has(field);
+}
+
 // Optional enterprise_id hint, shared by every workspace-scoped tool to skip the
 // automatic workspace→enterprise lookup scan.
 const enterpriseHint = {
@@ -105,7 +128,7 @@ export const TOOL_SHAPES = {
   list_enterprises: {},
 
   list_workspaces: {
-    enterprise_id: z.string().min(1).describe("Enterprise ID from list_enterprises."),
+    enterprise_id: chosenEnterpriseId("Enterprise ID from list_enterprises."),
     slug: z
       .string()
       .min(1)
@@ -395,18 +418,18 @@ export const TOOL_SHAPES = {
   },
 
   list_enterprise_resources: {
-    enterprise_id: z.string().min(1).describe("Enterprise ID."),
+    enterprise_id: chosenEnterpriseId("Enterprise ID."),
   },
 
   list_modules: {
-    enterprise_id: z.string().min(1).describe("Enterprise ID from list_enterprises."),
+    enterprise_id: chosenEnterpriseId("Enterprise ID from list_enterprises."),
   },
 
   list_workspace_modules: {...moduleInventoryPage, workspace_id: z.string().min(1).describe("Workspace ID from get_workspace_context or list_workspaces.")},
   list_module_consumers: {...moduleInventoryPage, module_id: z.string().min(1).describe("Module workspace ID returned by list_modules.")},
 
   list_vcs_connections: {
-    enterprise_id: z.string().min(1).describe("Enterprise ID."),
+    enterprise_id: chosenEnterpriseId("Enterprise ID."),
     provider: z
       .string()
       .min(1)
@@ -415,7 +438,7 @@ export const TOOL_SHAPES = {
   },
 
   list_vcs_repos: {
-    enterprise_id: z.string().min(1).describe("Enterprise ID."),
+    enterprise_id: chosenEnterpriseId("Enterprise ID."),
     connection_id: z.string().min(1).describe("Connection ID from list_vcs_connections."),
     search: z.string().describe("Optional search query to filter repos by name.").optional(),
   },

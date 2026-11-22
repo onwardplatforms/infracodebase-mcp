@@ -615,6 +615,23 @@ describe("get_workspace_context — drafting context for an unlinked repo", () =
     ).rejects.toBe(forbidden);
   });
 
+  it("drafts for the enterprise chosen at sign-in, without sending it as the workspace hint", async () => {
+    const client = mockClient({
+      resolveWorkspaceContext: vi.fn().mockResolvedValue(UNLINKED),
+      getBuildContext: vi.fn().mockResolvedValue(DRAFTING),
+    });
+    const ctx = mockContext({ client, chosenEnterpriseId: vi.fn(async () => "ent_chosen") });
+
+    await getWorkspaceContext.run(ctx, { repo_url: "acme/infra" });
+
+    expect(client.getBuildContext).toHaveBeenCalledWith(
+      expect.objectContaining({ enterpriseId: "ent_chosen" })
+    );
+    expect(client.resolveWorkspaceContext).toHaveBeenCalledWith(
+      expect.not.objectContaining({ enterpriseId: expect.anything() })
+    );
+  });
+
   it("never consults build-context for a linked repo", async () => {
     const client = mockClient({
       resolveWorkspaceContext: vi.fn().mockResolvedValue({ status: "linked" }),

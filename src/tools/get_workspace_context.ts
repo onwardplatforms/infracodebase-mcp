@@ -115,8 +115,11 @@ export const getWorkspaceContext: ToolDef = {
       return withBranch(result, detected);
     }
 
+    // Drafting for an unlinked repo needs an enterprise; the chosen one stands
+    // in for an omitted enterprise_id. It is never sent as the workspace hint,
+    // which must name the workspace's own enterprise.
     const selectors: DraftingSelectors = {
-      enterpriseId: a.enterprise_id,
+      enterpriseId: a.enterprise_id ?? (await ctx.chosenEnterpriseId()),
       rulesetIds: a.ruleset_ids,
       iacTool: a.iac_tool,
     };

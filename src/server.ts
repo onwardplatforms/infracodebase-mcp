@@ -10,6 +10,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { Config } from "./config.js";
 import { InfracodebaseClient } from "./client.js";
 import { AuthSessionError } from "./oauth.js";
+import { readSavedEnterprise } from "./settings.js";
 import { SERVER_INSTRUCTIONS } from "./instructions.js";
 import { registerAllTools } from "./tools/index.js";
 import { VERSION } from "./version.js";
@@ -24,6 +25,8 @@ export interface ServerContext {
    * when the client does not support roots.
    */
   listRoots?: () => Promise<string[]>;
+  /** The enterprise to use when a read tool is called without enterprise_id. */
+  chosenEnterpriseId?: () => Promise<string | undefined>;
 }
 
 /**
@@ -53,6 +56,9 @@ export async function createServer(config: Config): Promise<{
       const { roots } = await server.server.listRoots();
       return roots.map((root) => root.uri);
     },
+    chosenEnterpriseId: async () =>
+      process.env.INFRACODEBASE_ENTERPRISE_ID?.trim() ||
+      (await readSavedEnterprise(config.apiUrl))?.id,
   };
 
   // Register all tools with consolidated handlers

@@ -32,7 +32,16 @@ import {
   type LinkedRepo,
   type ResolvedRepo,
 } from "../repo-detect.js";
-import { TOOL_SHAPES, TOOL_DESCRIPTIONS, TOOL_ANNOTATIONS, type ToolName } from "./validation.js";
+import {
+  TOOL_SHAPES,
+  TOOL_DESCRIPTIONS,
+  TOOL_ANNOTATIONS,
+  usesChosenEnterprise,
+  type ToolName,
+} from "./validation.js";
+
+const NO_ENTERPRISE_CHOSEN =
+  "No enterprise chosen. Pass enterprise_id (from list_enterprises), or have the user run `infracodebase enterprise use <slug>`.";
 
 export type Args = Record<string, any>;
 
@@ -118,6 +127,12 @@ export interface ToolContext {
   getWorkspaceRepo(workspaceId: string, enterpriseHint?: string): Promise<LinkedRepo | null>;
   /** Drop what is cached about a workspace's repo after a tool changes its link. */
   forgetWorkspaceRepo(workspaceId: string): void;
+  /**
+   * The enterprise chosen at sign-in (or INFRACODEBASE_ENTERPRISE_ID), read on
+   * each call so `infracodebase enterprise use` applies without a restart.
+   * Undefined when none was chosen.
+   */
+  chosenEnterpriseId(): Promise<string | undefined>;
 }
 
 /**
@@ -344,6 +359,7 @@ export function createToolContext(context: ServerContext): ToolContext {
     resolveBranch,
     getWorkspaceRepo,
     forgetWorkspaceRepo,
+    chosenEnterpriseId: context.chosenEnterpriseId ?? (async () => undefined),
   };
 }
 
@@ -378,6 +394,11 @@ export function registerTool(server: McpServer, tool: ToolDef, ctx: ToolContext)
     },
     async (args: Args, extra: ToolExtra) => {
       try {
+        if (usesChosenEnterprise(TOOL_SHAPES[tool.name]) && !args.enterprise_id) {
+          const chosen = await ctx.chosenEnterpriseId();
+          if (!chosen) throw new Error(NO_ENTERPRISE_CHOSEN);
+          args = { ...args, enterprise_id: chosen };
+        }
         return asText(await tool.run(ctx, args, extra));
       } catch (err) {
         return asError(err);

@@ -53,6 +53,7 @@ export function mockContext(overrides: Partial<ToolContext> = {}): ToolContext {
     ),
     getWorkspaceRepo: vi.fn(async () => null),
     forgetWorkspaceRepo: vi.fn(),
+    chosenEnterpriseId: vi.fn(async () => undefined),
     ...overrides,
   };
 }

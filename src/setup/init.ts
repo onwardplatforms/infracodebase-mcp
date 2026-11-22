@@ -9,6 +9,7 @@ import { styleText } from "node:util";
 import * as prompts from "@clack/prompts";
 import { ApiError, InfracodebaseClient, type Identity } from "../client.js";
 import { AuthSessionError, createStoredOAuthTokenProvider, login } from "../oauth.js";
+import { enterpriseLabel, settleEnterprise, type EnterpriseRow } from "../enterprise-choice.js";
 import {
   clientsFor,
   normalizeApiUrl,
@@ -113,6 +114,45 @@ function signInMessage(url: string, noOpen: boolean): string {
   const { origin, pathname } = new URL(url);
   const shown = supportsHyperlinks(process.env) ? hyperlink(`${origin}${pathname}?…`, url) : url;
   return `Opening your browser to sign in…\n${dim(`(or open this URL: ${shown})`)}`;
+}
+
+/** Ask which enterprise to work in. Cancelling keeps the earlier choice. */
+export async function askEnterprise(
+  rows: EnterpriseRow[],
+  current: string | undefined
+): Promise<EnterpriseRow | null> {
+  const picked = await prompts.select({
+    message: "Which enterprise do you want to work in?",
+    options: rows.map((row) => ({ value: row.id, label: enterpriseLabel(row) })),
+    initialValue: current,
+  });
+  if (prompts.isCancel(picked)) return null;
+  return rows.find((row) => row.id === picked) ?? null;
+}
+
+async function chooseEnterprise(apiUrl: string): Promise<void> {
+  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  const choice = await settleEnterprise({
+    apiUrl,
+    client: identityClient(apiUrl),
+    ask: interactive ? askEnterprise : undefined,
+  });
+  switch (choice.kind) {
+    case "only":
+    case "chosen":
+    case "kept":
+      prompts.log.success(`Working in ${choice.enterprise.name ?? choice.enterprise.slug}`, {
+        spacing: 0,
+      });
+      return;
+    case "undecided":
+      prompts.log.warn(
+        `You belong to ${choice.count} enterprises. Run \`infracodebase enterprise use <slug>\` to choose one.`
+      );
+      return;
+    case "none":
+      return;
+  }
 }
 
 async function signIn(options: InitOptions): Promise<Identity> {
@@ -325,6 +365,7 @@ async function setUp(options: InitOptions): Promise<void> {
 
   prompts.intro(`Infracodebase MCP setup · ${new URL(origin).host}`);
   await signIn(options);
+  await chooseEnterprise(options.apiUrl);
 
   const { clients, alreadySetUp } = await chooseClients(env, options);
   if (clients.length === 0) {
