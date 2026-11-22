@@ -194,12 +194,16 @@ function mergeDrafting(unlinked: Json, drafting: BuildContext): Json {
     };
   }
   if (drafting.status !== "unlinked") {
-    // No enterprise is accessible (no_access), or the two endpoints disagree.
-    // Nothing to draft against: keep the unlinked answer and say why.
+    // build-context saw what the first lookup could not: a workspace the caller
+    // cannot view governs this repo (no_access, possibly with a connect_url),
+    // no enterprise is accessible, or several workspaces match. Its answer
+    // wins outright. Keeping the unlinked message would tell the agent to set
+    // up a repo that is already governed.
     return {
       ...unlinked,
+      ...drafting,
       can_generate: false,
-      message: [unlinked.message, drafting.message].filter(Boolean).join(" "),
+      message: drafting.message,
     };
   }
   return withDraftingMessage({ ...unlinked, ...drafting });
