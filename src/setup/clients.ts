@@ -346,7 +346,11 @@ function cliClient(options: {
         };
       }
       if (backup) await fs.rm(backup, { force: true });
-      return { ok: true, detail: "added for every project", restart: false };
+      return {
+        ok: true,
+        detail: `added to ${tildify(env, options.configFile(env))}`,
+        restart: true,
+      };
     },
   };
 }
