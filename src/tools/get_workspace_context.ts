@@ -196,13 +196,14 @@ function mergeDrafting(unlinked: Json, drafting: BuildContext): Json {
   if (drafting.status !== "unlinked") {
     // build-context saw what the first lookup could not: a workspace the caller
     // cannot view governs this repo (no_access, possibly with a connect_url),
-    // no enterprise is accessible, or several workspaces match. Its answer
-    // wins outright. Keeping the unlinked message would tell the agent to set
-    // up a repo that is already governed.
+    // no enterprise is accessible, several workspaces match, or the repo was
+    // linked between the two lookups. Its answer wins outright. Keeping the
+    // unlinked message would tell the agent to set up a repo that is already
+    // governed. Only a linked answer can be generation-ready.
     return {
       ...unlinked,
       ...drafting,
-      can_generate: false,
+      can_generate: drafting.status === "linked" ? drafting.can_generate === true : false,
       message: drafting.message,
     };
   }
