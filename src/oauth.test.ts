@@ -337,10 +337,15 @@ describe("stored OAuth sessions", () => {
         const callback = new URL(authorizationUrl.searchParams.get("redirect_uri")!);
         callback.searchParams.set("code", "authorization-code");
         callback.searchParams.set("state", authorizationUrl.searchParams.get("state")!);
+        // The approval page passes its theme, which this origin cannot read.
+        callback.searchParams.set("theme", "dark");
         const response = await fetch(callback);
         expect(response.status).toBe(200);
         expect(response.headers.get("content-type")).toContain("text/html");
-        expect(await response.text()).toContain("Device authorized");
+        const page = await response.text();
+        expect(page).toContain("Device authorized");
+        expect(page).toContain('data-theme="dark"');
+        expect(page).not.toContain("prefers-color-scheme");
       },
     });
 

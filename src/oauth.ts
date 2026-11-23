@@ -434,7 +434,22 @@ function terminalSafe(value: string): string {
 
 type CallbackPageKind = "success" | "oauth_error" | "invalid_callback";
 
-function callbackPage(kind: CallbackPageKind): string {
+/**
+ * The theme the browser showed on the approval page, passed through by the
+ * server because this page's origin (127.0.0.1) cannot read the app's choice.
+ * Without it the page follows the system setting.
+ */
+type CallbackTheme = "light" | "dark" | null;
+
+function callbackTheme(url: URL): CallbackTheme {
+  const theme = url.searchParams.get("theme");
+  return theme === "light" || theme === "dark" ? theme : null;
+}
+
+const DARK_RULES =
+  "body { background: hsl(210 11% 11%); color: hsl(0 0% 98%); } main { border-color: hsl(218 14% 25%); background: hsl(216 14% 14%); } p { color: hsl(210 6% 65%); }";
+
+function callbackPage(kind: CallbackPageKind, theme: CallbackTheme = null): string {
   const copy = {
     success: {
       title: "Device authorized",
@@ -450,7 +465,7 @@ function callbackPage(kind: CallbackPageKind): string {
     },
   }[kind];
   return `<!doctype html>
-<html lang="en">
+<html lang="en"${theme ? ` data-theme="${theme}"` : ""}>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -463,11 +478,7 @@ function callbackPage(kind: CallbackPageKind): string {
       svg { display: block; width: 40px; height: 40px; margin: 0 auto; }
       h1 { margin: 24px 0 0; font-size: 18px; font-weight: 600; line-height: 1.4; letter-spacing: -0.01em; }
       p { margin: 8px 0 0; color: hsl(240 3.8% 46.1%); font-size: 14px; line-height: 1.5; }
-      @media (prefers-color-scheme: dark) {
-        body { background: hsl(210 11% 11%); color: hsl(0 0% 98%); }
-        main { border-color: hsl(218 14% 25%); background: hsl(216 14% 14%); }
-        p { color: hsl(210 6% 65%); }
-      }
+      ${theme === "dark" ? `:root { color-scheme: dark; } ${DARK_RULES}` : theme === "light" ? ":root { color-scheme: light; }" : `@media (prefers-color-scheme: dark) { ${DARK_RULES} }`}
     </style>
   </head>
   <body>
@@ -483,6 +494,7 @@ function callbackPage(kind: CallbackPageKind): string {
 }
 
 function sendCallbackPage(
+  theme: CallbackTheme,
   response: http.ServerResponse,
   status: number,
   kind: CallbackPageKind,
@@ -495,7 +507,7 @@ function sendCallbackPage(
     "X-Content-Type-Options": "nosniff",
     Connection: "close",
   });
-  response.end(callbackPage(kind), onSent);
+  response.end(callbackPage(kind, theme), onSent);
 }
 
 /**
@@ -558,11 +570,12 @@ export async function login(apiUrl: string, options: LoginOptions = {}): Promise
       response.writeHead(404).end("Not found");
       return;
     }
+    const theme = callbackTheme(callbackUrl);
     const returnedState = callbackUrl.searchParams.get("state") || "";
     const code = callbackUrl.searchParams.get("code") || "";
     const oauthError = callbackUrl.searchParams.get("error");
     if (returnedState !== state) {
-      sendCallbackPage(response, 400, "invalid_callback", () => undefined);
+      sendCallbackPage(theme, response, 400, "invalid_callback", () => undefined);
       return;
     }
     if (oauthError) {
@@ -570,6 +583,7 @@ export async function login(apiUrl: string, options: LoginOptions = {}): Promise
         callbackUrl.searchParams.get("error_description") || oauthError
       );
       sendCallbackPage(
+        theme,
         response,
         400,
         "oauth_error",
@@ -579,6 +593,7 @@ export async function login(apiUrl: string, options: LoginOptions = {}): Promise
     }
     if (!code) {
       sendCallbackPage(
+        theme,
         response,
         400,
         "invalid_callback",
@@ -587,6 +602,7 @@ export async function login(apiUrl: string, options: LoginOptions = {}): Promise
       return;
     }
     sendCallbackPage(
+      theme,
       response,
       200,
       "success",
