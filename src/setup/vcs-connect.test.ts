@@ -79,7 +79,7 @@ describe("offerVcsConnections", () => {
     expect(d.waiting.stop).toHaveBeenCalled();
   });
 
-  it("says why for each provider, without claiming Azure DevOps grants workspace access", async () => {
+  it("asks about each provider by name", async () => {
     const confirm = vi.fn(async () => false);
     const d = deps(
       [
@@ -92,9 +92,10 @@ describe("offerVcsConnections", () => {
     );
     await offerVcsConnections(d);
 
-    expect(confirm.mock.calls[0][0]).toContain("access to workspaces through your repository permissions");
-    expect(confirm.mock.calls[1][0]).toContain("create repositories as you");
-    expect(confirm.mock.calls[1][0]).not.toContain("workspaces");
+    expect(confirm.mock.calls.map(([message]) => message)).toEqual([
+      "Connect to GitHub?",
+      "Connect to Azure DevOps?",
+    ]);
   });
 
   it("warns, with the server's words, when the enterprise has no active plan", async () => {

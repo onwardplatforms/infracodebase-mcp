@@ -211,7 +211,7 @@ Browser login stores OAuth credentials in `~/.config/infracodebase/credentials.j
 
 Where browser login can't work, such as cloud agents, CI, and other machines without your browser, set `INFRACODEBASE_TOKEN` (or `--token`) to a personal access token. When it is set, it takes precedence over a saved login.
 
-`init` then offers to connect your own version control account (GitHub today) if the enterprise uses it and you haven't, which is what lets your repository permissions give you access to workspaces. If you've authorized it before and are signed in to GitHub in the browser, it completes without a prompt. You can skip it.
+`init` then offers to connect your own version control account for each provider the enterprise uses that you haven't connected yet. On GitHub, that's what lets your repository permissions give you access to workspaces. On Azure DevOps, it lets infracodebase create repositories as you. If you've authorized it before and are signed in to GitHub in the browser, it completes without a prompt. You can skip it.
 
 Signing in also chooses the enterprise you work in: automatically when you belong to one, with one question when you belong to several. It is saved per instance in `settings.json` next to the credentials. Read tools such as `list_workspaces` and `list_vcs_connections` use it when no `enterprise_id` is passed, and the agent drafts for it on an unlinked repo. Tools that create anything still need an explicit `enterprise_id`. Switch with `infracodebase enterprise use <slug>`, or set `INFRACODEBASE_ENTERPRISE_ID` (useful with a token).
 

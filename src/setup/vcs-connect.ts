@@ -25,16 +25,6 @@ export function providerLabel(provider: string): string {
   return PROVIDER_LABELS[provider] ?? provider;
 }
 
-/**
- * What connecting gets the person, per provider. Only true claims: on GitHub
- * repository permissions grant workspace access; on Azure DevOps the sign-in
- * is only used to create repositories as the person.
- */
-const PURPOSE: Record<string, string> = {
-  github: "gives you access to workspaces through your repository permissions",
-  "azure-devops": "lets infracodebase create repositories as you",
-};
-
 /** The server's message from an API error body, else the error's own text. */
 function apiMessage(err: ApiError): string {
   try {
@@ -107,12 +97,11 @@ export async function offerVcsConnections(deps: OfferDeps): Promise<void> {
 
   for (const { provider, url } of missingConnections(rows)) {
     const label = providerLabel(provider);
-    const why = `Connecting your ${label} account ${PURPOSE[provider] ?? "lets infracodebase act as you there"}.`;
     if (!deps.confirm) {
-      deps.log.info(`${why} Connect it at ${url}`);
+      deps.log.info(`Connect to ${label} at ${url}`);
       continue;
     }
-    if (!(await deps.confirm(`Connect your ${label} account? ${why}`))) {
+    if (!(await deps.confirm(`Connect to ${label}?`))) {
       deps.log.info(`Skipped. Connect it any time at ${url}`);
       continue;
     }
