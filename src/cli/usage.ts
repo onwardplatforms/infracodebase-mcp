@@ -16,6 +16,7 @@ Commands:
   start             Start the MCP server over stdio
   login             Sign in through the browser and save a renewable session
   logout            Remove the saved session for this InfraCodebase instance
+  enterprise        Show the enterprise you work in; \`enterprise use <slug>\` switches
   help              Show this help
 
 Options:
@@ -31,6 +32,10 @@ Options:
   INFRACODEBASE_TOKEN / --token <token>
         Personal access token. Use it where browser login can't work: cloud
         agents such as Devin, CI, and other machines without your browser.
+  INFRACODEBASE_ENTERPRISE_ID
+        Enterprise to work in when no enterprise_id is passed. Overrides the
+        one chosen at sign-in. With a token, the sign-in choice is ignored, so
+        set this unless the token reaches exactly one enterprise.
 
 Docs: https://infracodebase.com/docs/developers/mcp`;
 }

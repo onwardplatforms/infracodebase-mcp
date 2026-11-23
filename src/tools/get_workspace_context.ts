@@ -115,8 +115,11 @@ export const getWorkspaceContext: ToolDef = {
       return withBranch(result, detected);
     }
 
+    // Drafting for an unlinked repo needs an enterprise; the chosen one stands
+    // in for an omitted enterprise_id. It is never sent as the workspace hint,
+    // which must name the workspace's own enterprise.
     const selectors: DraftingSelectors = {
-      enterpriseId: a.enterprise_id,
+      enterpriseId: a.enterprise_id ?? (await ctx.chosenEnterpriseId()),
       rulesetIds: a.ruleset_ids,
       iacTool: a.iac_tool,
     };
@@ -194,12 +197,17 @@ function mergeDrafting(unlinked: Json, drafting: BuildContext): Json {
     };
   }
   if (drafting.status !== "unlinked") {
-    // No enterprise is accessible (no_access), or the two endpoints disagree.
-    // Nothing to draft against: keep the unlinked answer and say why.
+    // build-context saw what the first lookup could not: a workspace the caller
+    // cannot view governs this repo (no_access, possibly with a connect_url),
+    // no enterprise is accessible, several workspaces match, or the repo was
+    // linked between the two lookups. Its answer wins outright. Keeping the
+    // unlinked message would tell the agent to set up a repo that is already
+    // governed. Only a linked answer can be generation-ready.
     return {
       ...unlinked,
-      can_generate: false,
-      message: [unlinked.message, drafting.message].filter(Boolean).join(" "),
+      ...drafting,
+      can_generate: drafting.status === "linked" ? drafting.can_generate === true : false,
+      message: drafting.message,
     };
   }
   return withDraftingMessage({ ...unlinked, ...drafting });

@@ -445,6 +445,48 @@ describe("registerTool", () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("boom");
   });
+
+  describe("chosen enterprise", () => {
+    function registered(name: ToolDef["name"], chosen: string | undefined) {
+      const { server, calls } = fakeServer();
+      const run = vi.fn(async (_ctx: unknown, args: unknown) => args);
+      registerTool(server, { name, run }, { chosenEnterpriseId: async () => chosen } as any);
+      return { handler: calls[0].handler, run };
+    }
+
+    it("fills enterprise_id on a read tool from the enterprise chosen at sign-in", async () => {
+      const { handler } = registered("list_vcs_connections", "ent_chosen");
+      const result = await handler({});
+      expect(JSON.parse(result.content[0].text)).toEqual({ enterprise_id: "ent_chosen" });
+    });
+
+    it("lets an explicit enterprise_id win", async () => {
+      const { handler } = registered("list_workspaces", "ent_chosen");
+      const result = await handler({ enterprise_id: "ent_explicit" });
+      expect(JSON.parse(result.content[0].text)).toEqual({ enterprise_id: "ent_explicit" });
+    });
+
+    it("says how to choose one when none was chosen, without calling the tool", async () => {
+      const { handler, run } = registered("list_modules", undefined);
+      const result = await handler({});
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("infracodebase enterprise use");
+      expect(run).not.toHaveBeenCalled();
+    });
+
+    // A write never lands in an enterprise by default, and the workspace hint
+    // must name the workspace's own enterprise, so neither is filled.
+    it.each([
+      "create_workspace",
+      "setup_workspace",
+      "get_workspace_context",
+      "list_workspace_modules",
+    ] as const)("leaves %s's enterprise_id alone", async (name) => {
+      const { handler } = registered(name, "ent_chosen");
+      const result = await handler({});
+      expect(JSON.parse(result.content[0].text)).toEqual({});
+    });
+  });
 });
 
 describe("registerTool — metadata", () => {

@@ -211,13 +211,18 @@ Browser login stores OAuth credentials in `~/.config/infracodebase/credentials.j
 
 Where browser login can't work, such as cloud agents, CI, and other machines without your browser, set `INFRACODEBASE_TOKEN` (or `--token`) to a personal access token. When it is set, it takes precedence over a saved login.
 
+`init` then offers to connect your own version control account for each provider the enterprise uses that you haven't connected yet. On GitHub, that's what lets your repository permissions give you access to workspaces. On Azure DevOps, it lets infracodebase create repositories as you. If you've authorized it before and are signed in to GitHub in the browser, it completes without a prompt. You can skip it, and press Enter to stop waiting for the browser.
+
+Signing in also chooses the enterprise you work in: automatically when you belong to one, with one question when you belong to several. It is saved per instance in `settings.json` next to the credentials. Read tools such as `list_workspaces` and `list_vcs_connections` use it when no `enterprise_id` is passed, and the agent drafts for it on an unlinked repo. Tools that create anything still need an explicit `enterprise_id`. Switch with `infracodebase enterprise use <slug>`, or set `INFRACODEBASE_ENTERPRISE_ID` (useful with a token).
+
 ## Troubleshooting
 
 - Missing or expired session. Run `npx -y @infracodebase/mcp@latest init` (or `login`). If a browser cannot open, add `--no-open` and open the printed URL yourself. In Devin or another cloud agent, use a token instead; see [manual setup](#manual).
 - `npx: command not found`, or the server never starts. Node.js 20.12 or newer isn't installed where the server runs. Install it and restart your client. For Devin, add Node to the organization blueprint. If a client can't find `npx` even though it's installed (common with `nvm`), set the command to the full path from `which npx` (macOS and Linux) or `where npx` (Windows).
 - TLS errors against a self-hosted instance. If your instance uses a private certificate authority, set `NODE_EXTRA_CA_CERTS` to the path of your root certificate.
 - `get_workspace_context` returns `unlinked`. No workspace governs the repo yet, so pushes are not checked. The agent can still draft: the answer carries the enterprise's required rulesets, coding guidelines, and modules (`can_generate` says whether it is complete, and `selection_required` asks the agent to pick optional rulesets first). To get pushes checked, ask the agent to set the repo up: `plan_workspace_setup` finds the right enterprise and connection, proposes a workspace and rulesets, and lists the decisions that are yours. Once you confirm, `setup_workspace` creates and links the workspace and reloads the rules. On a self-hosted instance that predates drafting context, `unlinked` comes back without rules and the agent waits for setup, as before.
-- `get_workspace_context` returns `needs_enterprise`. You belong to several enterprises and the repo is not linked, so the agent asks which one to draft for and calls again with `enterprise_id`.
+- `get_workspace_context` returns `no_access`. A workspace governs the repo but you can't see it yet. When `connect_url` is present, connecting your own GitHub account there gives you access through your repository permissions (`init` offers this too). Otherwise ask an enterprise admin to add you. Don't set the repo up again.
+- `get_workspace_context` returns `needs_enterprise`. You belong to several enterprises, the repo is not linked, and no enterprise is chosen. Run `npx -y @infracodebase/mcp@latest enterprise use <slug>` (or let the agent ask and pass `enterprise_id`).
 
 ## CLI
 
@@ -228,6 +233,8 @@ npx -y @infracodebase/mcp@latest init     # Sign in and set up your MCP clients
 npx -y @infracodebase/mcp@latest start    # Start the server over stdio
 npx -y @infracodebase/mcp@latest login    # Sign in and save a renewable session
 npx -y @infracodebase/mcp@latest logout   # Revoke and remove the saved session
+npx -y @infracodebase/mcp@latest enterprise            # Show the enterprise you work in
+npx -y @infracodebase/mcp@latest enterprise use <slug> # Switch to another one
 npx -y @infracodebase/mcp@latest help     # Print full usage
 ```
 

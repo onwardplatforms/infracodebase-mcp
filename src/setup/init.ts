@@ -8,7 +8,14 @@ import os from "node:os";
 import { styleText } from "node:util";
 import * as prompts from "@clack/prompts";
 import { ApiError, InfracodebaseClient, type Identity } from "../client.js";
-import { AuthSessionError, createStoredOAuthTokenProvider, login } from "../oauth.js";
+import {
+  AuthSessionError,
+  createStoredOAuthTokenProvider,
+  launchBrowser,
+  login,
+} from "../oauth.js";
+import { offerVcsConnections } from "./vcs-connect.js";
+import { enterpriseLabel, settleEnterprise, type EnterpriseRow } from "../enterprise-choice.js";
 import {
   clientsFor,
   normalizeApiUrl,
@@ -113,6 +120,112 @@ function signInMessage(url: string, noOpen: boolean): string {
   const { origin, pathname } = new URL(url);
   const shown = supportsHyperlinks(process.env) ? hyperlink(`${origin}${pathname}?…`, url) : url;
   return `Opening your browser to sign in…\n${dim(`(or open this URL: ${shown})`)}`;
+}
+
+/** Ask which enterprise to work in. Cancelling keeps the earlier choice. */
+export async function askEnterprise(
+  rows: EnterpriseRow[],
+  current: string | undefined
+): Promise<EnterpriseRow | null> {
+  const picked = await prompts.select({
+    message: "Which enterprise do you want to work in?",
+    options: rows.map((row) => ({ value: row.id, label: enterpriseLabel(row) })),
+    initialValue: current,
+  });
+  if (prompts.isCancel(picked)) return null;
+  return rows.find((row) => row.id === picked) ?? null;
+}
+
+/** Settle the enterprise and report it. Returns its id, or null when none is chosen. */
+async function chooseEnterprise(apiUrl: string): Promise<string | null> {
+  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  const choice = await settleEnterprise({
+    apiUrl,
+    client: identityClient(apiUrl),
+    ask: interactive ? askEnterprise : undefined,
+  });
+  switch (choice.kind) {
+    case "only":
+    case "chosen":
+    case "kept":
+      prompts.log.success(`Working in ${enterpriseLabel(choice.enterprise)}`, { spacing: 0 });
+      return choice.enterprise.id;
+    case "undecided":
+      prompts.log.warn(
+        `You belong to ${choice.count} enterprises. Run \`infracodebase enterprise use <slug>\` to choose one.`
+      );
+      return null;
+    case "unavailable":
+      prompts.log.warn(
+        `Couldn't list your enterprises (${choice.error}). Run \`infracodebase enterprise use <slug>\` later to choose one.`
+      );
+      return null;
+    case "none":
+      prompts.log.warn(
+        "You aren't a member of any enterprise yet, so there are no rules to work with. Ask your enterprise admin to invite you."
+      );
+      return null;
+  }
+}
+
+/** Offer the personal VCS connections the chosen enterprise needs. */
+async function connectVcs(options: InitOptions, enterpriseId: string): Promise<void> {
+  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  const waiting = prompts.spinner();
+  await offerVcsConnections({
+    client: identityClient(options.apiUrl),
+    enterpriseId,
+    confirm: interactive
+      ? async (message) => {
+          const answer = await prompts.confirm({ message, initialValue: true });
+          return !prompts.isCancel(answer) && answer;
+        }
+      : null,
+    open: async (url) => {
+      if (options.noOpen) prompts.log.step(`Open this URL to connect:\n${url}`);
+      else await launchBrowser(url).catch(() => prompts.log.step(`Open this URL to connect:\n${url}`));
+    },
+    log: {
+      success: (text) => prompts.log.success(text, { spacing: 0 }),
+      info: (text) => prompts.log.info(text),
+      warn: (text) => prompts.log.warn(text),
+    },
+    waiting: { start: (text) => waiting.start(text), stop: () => waiting.clear() },
+    listenForSkip: interactive ? listenForEnter : undefined,
+  });
+}
+
+/**
+ * Resolve when Enter is pressed, so the connect wait never traps the person.
+ * Raw mode keeps the key from echoing over the spinner, so Ctrl-C is passed
+ * on as SIGINT by hand.
+ */
+function listenForEnter(): { pressed: Promise<void>; dispose(): void } {
+  const stdin = process.stdin;
+  const wasRaw = stdin.isRaw;
+  let onData: (chunk: Buffer) => void = () => undefined;
+  const pressed = new Promise<void>((resolve) => {
+    onData = (chunk) => {
+      if (chunk.includes(0x03)) {
+        dispose();
+        process.kill(process.pid, "SIGINT");
+      } else if (chunk.includes(0x0d) || chunk.includes(0x0a)) {
+        resolve();
+      }
+    };
+  });
+  stdin.setRawMode(true);
+  stdin.on("data", onData);
+  stdin.resume();
+  let disposed = false;
+  function dispose(): void {
+    if (disposed) return;
+    disposed = true;
+    stdin.off("data", onData);
+    stdin.setRawMode(wasRaw);
+    stdin.pause();
+  }
+  return { pressed, dispose };
 }
 
 async function signIn(options: InitOptions): Promise<Identity> {
@@ -325,6 +438,8 @@ async function setUp(options: InitOptions): Promise<void> {
 
   prompts.intro(`Infracodebase MCP setup · ${new URL(origin).host}`);
   await signIn(options);
+  const enterpriseId = await chooseEnterprise(options.apiUrl);
+  if (enterpriseId) await connectVcs(options, enterpriseId);
 
   const { clients, alreadySetUp } = await chooseClients(env, options);
   if (clients.length === 0) {

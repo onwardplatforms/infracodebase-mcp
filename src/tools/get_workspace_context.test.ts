@@ -510,7 +510,7 @@ describe("get_workspace_context — drafting context for an unlinked repo", () =
     });
   });
 
-  it("keeps the unlinked answer, with can_generate false, when no enterprise is accessible", async () => {
+  it("answers no_access, without the setup instructions, when no enterprise is accessible", async () => {
     const client = mockClient({
       resolveWorkspaceContext: vi.fn().mockResolvedValue(UNLINKED),
       getBuildContext: vi.fn().mockResolvedValue({
@@ -525,9 +525,77 @@ describe("get_workspace_context — drafting context for an unlinked repo", () =
 
     expect(result).toEqual({
       ...UNLINKED,
+      status: "no_access",
       can_generate: false,
-      message: "set it up No enterprise is accessible.",
+      enterprises: [],
+      message: "No enterprise is accessible.",
     });
+  });
+
+  // Reproduced on prod: a Viewer who could not see the repo's workspace got
+  // "isn't governed ... create a new workspace" joined to "a workspace exists".
+  // A server that predates the no_access fix still answers this way.
+  it("lets build-context's no_access win when a workspace the caller cannot see governs the repo", async () => {
+    const connectUrl = "https://infracodebase.com/api/github/oauth/authorize?return_url=%2Fsettings%2Fconnections";
+    const client = mockClient({
+      resolveWorkspaceContext: vi.fn().mockResolvedValue(UNLINKED),
+      getBuildContext: vi.fn().mockResolvedValue({
+        status: "no_access",
+        owner: "acme",
+        name: "infra",
+        can_generate: false,
+        connect_url: connectUrl,
+        message: "A workspace exists for acme/infra but you don't have access to it.",
+      }),
+    });
+
+    const result = await getWorkspaceContext.run(mockContext({ client }), { repo_url: "acme/infra" });
+
+    expect(result).toMatchObject({
+      status: "no_access",
+      can_generate: false,
+      connect_url: connectUrl,
+      message: "A workspace exists for acme/infra but you don't have access to it.",
+    });
+    expect((result as { message: string }).message).not.toContain("set it up");
+  });
+
+  // The repo can be linked between the unlinked lookup and build-context.
+  it("keeps build-context's can_generate when it answers linked and generation-ready", async () => {
+    const client = mockClient({
+      resolveWorkspaceContext: vi.fn().mockResolvedValue(UNLINKED),
+      getBuildContext: vi.fn().mockResolvedValue({
+        ...DRAFTING,
+        status: "linked",
+        can_generate: true,
+        workspace: { id: "ws_1", name: "infra" },
+        message: "Write against these rulesets.",
+      }),
+    });
+
+    const result = await getWorkspaceContext.run(mockContext({ client }), { repo_url: "acme/infra" });
+
+    expect(result).toMatchObject({
+      status: "linked",
+      can_generate: true,
+      workspace: { id: "ws_1", name: "infra" },
+      message: "Write against these rulesets.",
+    });
+  });
+
+  it("never lets a no_access answer generate, even if build-context says it can", async () => {
+    const client = mockClient({
+      resolveWorkspaceContext: vi.fn().mockResolvedValue(UNLINKED),
+      getBuildContext: vi.fn().mockResolvedValue({
+        status: "no_access",
+        can_generate: true,
+        message: "A workspace exists for acme/infra but you don't have access to it.",
+      }),
+    });
+
+    const result = await getWorkspaceContext.run(mockContext({ client }), { repo_url: "acme/infra" });
+
+    expect(result).toMatchObject({ status: "no_access", can_generate: false });
   });
 
   it("lets a build-context failure other than 404 reach the agent, since it names the fix", async () => {
@@ -545,6 +613,23 @@ describe("get_workspace_context — drafting context for an unlinked repo", () =
     await expect(
       getWorkspaceContext.run(mockContext({ client }), { repo_url: "acme/infra", enterprise_id: "ent_x" })
     ).rejects.toBe(forbidden);
+  });
+
+  it("drafts for the enterprise chosen at sign-in, without sending it as the workspace hint", async () => {
+    const client = mockClient({
+      resolveWorkspaceContext: vi.fn().mockResolvedValue(UNLINKED),
+      getBuildContext: vi.fn().mockResolvedValue(DRAFTING),
+    });
+    const ctx = mockContext({ client, chosenEnterpriseId: vi.fn(async () => "ent_chosen") });
+
+    await getWorkspaceContext.run(ctx, { repo_url: "acme/infra" });
+
+    expect(client.getBuildContext).toHaveBeenCalledWith(
+      expect.objectContaining({ enterpriseId: "ent_chosen" })
+    );
+    expect(client.resolveWorkspaceContext).toHaveBeenCalledWith(
+      expect.not.objectContaining({ enterpriseId: expect.anything() })
+    );
   });
 
   it("never consults build-context for a linked repo", async () => {
