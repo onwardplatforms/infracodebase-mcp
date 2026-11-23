@@ -79,6 +79,36 @@ describe("offerVcsConnections", () => {
     expect(d.waiting.stop).toHaveBeenCalled();
   });
 
+  it("lets the person skip the wait, and stops listening afterwards", async () => {
+    const dispose = vi.fn();
+    const d = {
+      ...deps([NOT_CONNECTED], async () => true),
+      // The browser never finishes; only the skip can end the wait.
+      sleep: () => new Promise<void>(() => undefined),
+      timeoutMs: 60_000,
+      listenForSkip: () => ({ pressed: Promise.resolve(), dispose }),
+    };
+    await offerVcsConnections(d);
+
+    expect(d.waiting.start).toHaveBeenCalledWith(expect.stringContaining("press Enter to skip"));
+    expect(d.log.info).toHaveBeenCalledWith(`Skipped. Connect it any time at ${URL_GH}`);
+    expect(d.log.warn).not.toHaveBeenCalled();
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(d.waiting.stop).toHaveBeenCalled();
+  });
+
+  it("stops listening for a skip once the connection lands", async () => {
+    const dispose = vi.fn();
+    const d = {
+      ...deps([NOT_CONNECTED, CONNECTED], async () => true),
+      listenForSkip: () => ({ pressed: new Promise<void>(() => undefined), dispose }),
+    };
+    await offerVcsConnections(d);
+
+    expect(d.log.success).toHaveBeenCalledWith("GitHub account connected");
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
   it("asks about each provider by name", async () => {
     const confirm = vi.fn(async () => false);
     const d = deps(

@@ -191,7 +191,41 @@ async function connectVcs(options: InitOptions, enterpriseId: string): Promise<v
       warn: (text) => prompts.log.warn(text),
     },
     waiting: { start: (text) => waiting.start(text), stop: () => waiting.clear() },
+    listenForSkip: interactive ? listenForEnter : undefined,
   });
+}
+
+/**
+ * Resolve when Enter is pressed, so the connect wait never traps the person.
+ * Raw mode keeps the key from echoing over the spinner, so Ctrl-C is passed
+ * on as SIGINT by hand.
+ */
+function listenForEnter(): { pressed: Promise<void>; dispose(): void } {
+  const stdin = process.stdin;
+  const wasRaw = stdin.isRaw;
+  let onData: (chunk: Buffer) => void = () => undefined;
+  const pressed = new Promise<void>((resolve) => {
+    onData = (chunk) => {
+      if (chunk.includes(0x03)) {
+        dispose();
+        process.kill(process.pid, "SIGINT");
+      } else if (chunk.includes(0x0d) || chunk.includes(0x0a)) {
+        resolve();
+      }
+    };
+  });
+  stdin.setRawMode(true);
+  stdin.on("data", onData);
+  stdin.resume();
+  let disposed = false;
+  function dispose(): void {
+    if (disposed) return;
+    disposed = true;
+    stdin.off("data", onData);
+    stdin.setRawMode(wasRaw);
+    stdin.pause();
+  }
+  return { pressed, dispose };
 }
 
 async function signIn(options: InitOptions): Promise<Identity> {

@@ -63,6 +63,12 @@ export interface OfferDeps {
   log: { success(text: string): void; info(text: string): void; warn(text: string): void };
   /** Spinner-style wait while the person finishes in the browser. */
   waiting: { start(text: string): void; stop(text?: string): void };
+  /**
+   * Starts listening for the person to skip the wait (Enter in a terminal).
+   * `pressed` resolves on a skip; `dispose` stops listening. Absent: the wait
+   * runs until the connection lands or the timeout.
+   */
+  listenForSkip?: () => { pressed: Promise<void>; dispose(): void };
   pollMs?: number;
   timeoutMs?: number;
   sleep?: (ms: number) => Promise<void>;
@@ -107,27 +113,41 @@ export async function offerVcsConnections(deps: OfferDeps): Promise<void> {
     }
 
     await deps.open(url);
-    deps.waiting.start(`Waiting for you to connect ${label} in the browser`);
-    const deadline = Date.now() + (deps.timeoutMs ?? 180_000);
-    let connected = false;
-    while (Date.now() < deadline) {
-      await sleep(deps.pollMs ?? 2_000);
-      try {
-        const now = await readRows(deps.client, deps.enterpriseId);
-        if (connectedProviders(now).includes(provider)) {
-          connected = true;
-          break;
-        }
-      } catch {
-        // A blip while polling is not a failure; keep waiting until the deadline.
-      }
+    const skip = deps.listenForSkip?.();
+    deps.waiting.start(
+      `Waiting for you to connect ${label} in the browser${skip ? " (press Enter to skip)" : ""}`
+    );
+    let outcome: "connected" | "skipped" | "timed_out" = "timed_out";
+    try {
+      outcome = await waitForConnection(deps, provider, sleep, skip?.pressed);
+    } finally {
+      skip?.dispose();
+      deps.waiting.stop();
     }
-    if (connected) {
-      deps.waiting.stop();
-      deps.log.success(`${label} account connected`);
-    } else {
-      deps.waiting.stop();
-      deps.log.warn(`Didn't see the ${label} connection finish. Connect it any time at ${url}`);
+    if (outcome === "connected") deps.log.success(`${label} account connected`);
+    else if (outcome === "skipped") deps.log.info(`Skipped. Connect it any time at ${url}`);
+    else deps.log.warn(`Didn't see the ${label} connection finish. Connect it any time at ${url}`);
+  }
+}
+
+async function waitForConnection(
+  deps: OfferDeps,
+  provider: string,
+  sleep: (ms: number) => Promise<void>,
+  skipped: Promise<void> | undefined
+): Promise<"connected" | "skipped" | "timed_out"> {
+  const skip = skipped?.then(() => "skipped" as const) ?? new Promise<never>(() => undefined);
+  const deadline = Date.now() + (deps.timeoutMs ?? 120_000);
+  while (Date.now() < deadline) {
+    if ((await Promise.race([sleep(deps.pollMs ?? 2_000).then(() => "tick" as const), skip])) === "skipped") {
+      return "skipped";
+    }
+    try {
+      const now = await readRows(deps.client, deps.enterpriseId);
+      if (connectedProviders(now).includes(provider)) return "connected";
+    } catch {
+      // A blip while polling is not a failure; keep waiting until the deadline.
     }
   }
+  return "timed_out";
 }
