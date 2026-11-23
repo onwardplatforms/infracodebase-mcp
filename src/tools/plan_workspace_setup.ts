@@ -156,6 +156,16 @@ function localCreateCommand(provider: string | undefined, account: string, name:
   }
 }
 
+/**
+ * An Azure DevOps repository lives inside a project. A connection pinned to
+ * one ("org/project") supplies it; one scoped to the whole organization does
+ * not, so the user has to name the project.
+ */
+function projectNote(connection: { provider?: string; account?: string | null }): string {
+  if (connection.provider !== "azure-devops" || connection.account?.includes("/")) return "";
+  return ` Azure DevOps repositories live inside a project, and this connection covers all of ${connection.account ?? "the organization"}: ask the user which project to create it in and pass it as project.`;
+}
+
 const PUSH_THEN_PLAN_AGAIN =
   "push an initial commit, then call plan_workspace_setup again with repo_url set to the new repository.";
 
@@ -184,7 +194,8 @@ function creationGuidance(
         instructions:
           `infracodebase can create this repository on ${label} under ${account} with the user's own connected account. ` +
           `Call setup_workspace with create_repo true, repo_name "${name}", enterprise_id ${enterprise.id}, ` +
-          `connection_id ${connection.id}, and either workspace_name + ruleset_ids or existing_workspace_id.`,
+          `connection_id ${connection.id}, and either workspace_name + ruleset_ids or existing_workspace_id.` +
+          projectNote(connection),
       };
     case "connect_personal_account":
       return provider(
@@ -442,6 +453,7 @@ async function missingRepoPlan(
       `create_repo true, repo_name, visibility, enterprise_id ${enterprise.id}, connection_id ` +
       `${target.connection_id}, and either workspace_name + ruleset_ids or existing_workspace_id. It ` +
       "creates the repository, links it, and returns the clone URL to add as the git remote." +
+      projectNote(target) +
       (status === "repo_not_found"
         ? " The checkout already has a remote, so the user will point it at the new repository with `git remote set-url origin`."
         : ""),

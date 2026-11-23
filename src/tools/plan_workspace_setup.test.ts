@@ -294,6 +294,30 @@ describe("plan_workspace_setup — the repository does not exist yet", () => {
     expect(client.listVcsRepos).not.toHaveBeenCalled();
   });
 
+  it("asks for an Azure DevOps project only when the connection covers a whole organization", async () => {
+    const ado = (id: string, account: string) => ({
+      ...creatable(id, account),
+      provider: "azure-devops",
+      host: "dev.azure.com",
+      account_type: null,
+      allowed_visibilities: ["private"],
+    });
+    const plan = async (account: string) =>
+      (await planWorkspaceSetup.run(
+        mockContext({ client: enterpriseClient([ado("conn_ado", account)]) }),
+        { repo_name: "platform-network" }
+      )) as any;
+
+    const orgWide = await plan("acme-org");
+    expect(orgWide.target.create.instructions).toContain("pass it as project");
+    expect(orgWide.next).toContain("pass it as project");
+
+    // Pinned to a project: the connection already says where.
+    const pinned = await plan("acme-org/Platform");
+    expect(pinned.target.create.instructions).not.toContain("project");
+    expect(pinned.next).not.toContain("pass it as project");
+  });
+
   it("asks for the repository name when none was given", async () => {
     const client = enterpriseClient([creatable("conn_1")]);
 

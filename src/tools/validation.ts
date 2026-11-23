@@ -510,6 +510,13 @@ export const TOOL_SHAPES = {
       .string()
       .describe("With create_repo: optional description for the new repository.")
       .optional(),
+    project: z
+      .string()
+      .min(1)
+      .describe(
+        "With create_repo, Azure DevOps only: the project to create the repository in, when the connection covers a whole organization. The plan says when it is needed."
+      )
+      .optional(),
     visibility: z
       .enum(["private", "internal", "public"])
       .describe(

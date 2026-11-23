@@ -175,6 +175,37 @@ describe("setup_workspace — create the repository first", () => {
     clone_url: "https://github.com/acme/platform-network.git",
   };
 
+  it("passes the Azure DevOps project through to repository creation", async () => {
+    const client = mockClient({
+      createVcsRepository: vi.fn().mockResolvedValue({
+        ...created,
+        provider: "azure-devops",
+        path: "acme-org/Platform/platform-network",
+        clone_url: "https://dev.azure.com/acme-org/Platform/_git/platform-network",
+      }),
+      createWorkspace: vi
+        .fn()
+        .mockResolvedValue({ workspace: { id: "ws_new" }, repository_linked: true }),
+      resolveWorkspaceContext: vi.fn().mockResolvedValue({ status: "linked" }),
+    });
+
+    await setupWorkspace.run(mockContext({ client }), {
+      enterprise_id: "ent_1",
+      connection_id: "conn_ado",
+      create_repo: true,
+      repo_name: "platform-network",
+      project: "Platform",
+      workspace_name: "platform-network",
+      ruleset_ids: ["rs_req"],
+    });
+
+    expect(client.createVcsRepository).toHaveBeenCalledWith(
+      "ent_1",
+      "conn_ado",
+      expect.objectContaining({ name: "platform-network", project: "Platform" })
+    );
+  });
+
   it("creates the repo as the user, links its default branch, and says how to add the remote", async () => {
     const client = mockClient({
       createVcsRepository: vi.fn().mockResolvedValue(created),
