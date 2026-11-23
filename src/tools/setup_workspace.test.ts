@@ -238,6 +238,52 @@ describe("setup_workspace — create the repository first", () => {
     expect(result.repository.clone_url).toBe(created.clone_url);
   });
 
+  it("creates an Azure DevOps repo in the project the user chose", async () => {
+    const client = mockClient({
+      createVcsRepository: vi.fn().mockResolvedValue({
+        ...created,
+        provider: "azure-devops",
+        path: "acme/Platform Team/platform-network",
+      }),
+      createWorkspace: vi.fn().mockResolvedValue({ workspace: { id: "ws_new" }, repository_linked: true }),
+      resolveWorkspaceContext: vi.fn().mockResolvedValue({ status: "linked" }),
+    });
+
+    await setupWorkspace.run(mockContext({ client }), {
+      enterprise_id: "ent_1",
+      connection_id: "conn_1",
+      create_repo: true,
+      repo_name: "platform-network",
+      project: "Platform Team",
+      workspace_name: "platform-network",
+    });
+
+    expect(client.createVcsRepository).toHaveBeenCalledWith(
+      "ent_1",
+      "conn_1",
+      expect.objectContaining({ name: "platform-network", project: "Platform Team" })
+    );
+    expect(client.createWorkspace).toHaveBeenCalledWith(
+      "ent_1",
+      expect.objectContaining({
+        repository: expect.objectContaining({ path: "acme/Platform Team/platform-network" }),
+      })
+    );
+  });
+
+  it("refuses a project when no repo is being created", async () => {
+    const client = mockClient();
+
+    await expect(
+      setupWorkspace.run(mockContext({ client }), {
+        ...plan,
+        project: "Platform Team",
+        workspace_name: "x",
+      })
+    ).rejects.toThrow(/project only apply with create_repo/);
+    expect(client.createWorkspace).not.toHaveBeenCalled();
+  });
+
   it("refuses create_repo without a repo_name before touching anything", async () => {
     const client = mockClient();
 
