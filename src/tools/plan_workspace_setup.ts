@@ -184,7 +184,10 @@ function creationGuidance(
         instructions:
           `infracodebase can create this repository on ${label} under ${account} with the user's own connected account. ` +
           `Call setup_workspace with create_repo true, repo_name "${name}", enterprise_id ${enterprise.id}, ` +
-          `connection_id ${connection.id}, and either workspace_name + ruleset_ids or existing_workspace_id.`,
+          `connection_id ${connection.id}, and either workspace_name + ruleset_ids or existing_workspace_id.` +
+          (connection.provider === "azure-devops"
+            ? " Azure DevOps repositories live inside a project: ask the user which project and pass it as project."
+            : ""),
       };
     case "connect_personal_account":
       return provider(

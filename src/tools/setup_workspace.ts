@@ -110,9 +110,9 @@ function validateArgs(a: Record<string, unknown>) {
     }
     return;
   }
-  if (a.repo_name || a.visibility || a.repo_description) {
+  if (a.repo_name || a.visibility || a.repo_description || a.project) {
     throw new Error(
-      "repo_name, visibility, and repo_description only apply with create_repo. To create the " +
+      "repo_name, visibility, repo_description, and project only apply with create_repo. To create the " +
         "repository first, pass create_repo true; to link an existing one, drop them."
     );
   }
@@ -136,6 +136,7 @@ export const setupWorkspace: ToolDef = {
         name: a.repo_name,
         description: a.repo_description,
         visibility: a.visibility,
+        project: a.project,
       });
       createdRepo = { repository, branch: repository.default_branch || "main" };
     }
