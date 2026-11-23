@@ -10,7 +10,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { Config } from "./config.js";
 import { InfracodebaseClient } from "./client.js";
 import { AuthSessionError } from "./oauth.js";
-import { readSavedEnterprise } from "./settings.js";
+import { chosenEnterpriseResolver } from "./enterprise-choice.js";
 import { SERVER_INSTRUCTIONS } from "./instructions.js";
 import { registerAllTools } from "./tools/index.js";
 import { VERSION } from "./version.js";
@@ -56,9 +56,11 @@ export async function createServer(config: Config): Promise<{
       const { roots } = await server.server.listRoots();
       return roots.map((root) => root.uri);
     },
-    chosenEnterpriseId: async () =>
-      process.env.INFRACODEBASE_ENTERPRISE_ID?.trim() ||
-      (await readSavedEnterprise(config.apiUrl))?.id,
+    chosenEnterpriseId: chosenEnterpriseResolver({
+      apiUrl: config.apiUrl,
+      authKind: config.authKind,
+      client,
+    }),
   };
 
   // Register all tools with consolidated handlers

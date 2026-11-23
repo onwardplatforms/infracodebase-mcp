@@ -141,13 +141,16 @@ async function chooseEnterprise(apiUrl: string): Promise<void> {
     case "only":
     case "chosen":
     case "kept":
-      prompts.log.success(`Working in ${choice.enterprise.name ?? choice.enterprise.slug}`, {
-        spacing: 0,
-      });
+      prompts.log.success(`Working in ${enterpriseLabel(choice.enterprise)}`, { spacing: 0 });
       return;
     case "undecided":
       prompts.log.warn(
         `You belong to ${choice.count} enterprises. Run \`infracodebase enterprise use <slug>\` to choose one.`
+      );
+      return;
+    case "unavailable":
+      prompts.log.warn(
+        `Couldn't list your enterprises (${choice.error}). Run \`infracodebase enterprise use <slug>\` later to choose one.`
       );
       return;
     case "none":

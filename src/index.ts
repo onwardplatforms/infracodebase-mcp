@@ -23,6 +23,7 @@ import { InfracodebaseClient } from "./client.js";
 import { startServer } from "./server.js";
 import { buildUsage } from "./cli/usage.js";
 import { createStoredOAuthTokenProvider, login, logout } from "./oauth.js";
+import { saveEnterprise } from "./settings.js";
 import { askEnterprise, runInit } from "./setup/init.js";
 import { runEnterpriseCommand } from "./cli/enterprise.js";
 import { enterpriseLabel, settleEnterprise } from "./enterprise-choice.js";
@@ -117,6 +118,10 @@ async function main() {
           console.error(
             `You belong to ${choice.count} enterprises. Choose one with: infracodebase enterprise use <slug>`
           );
+        } else if (choice.kind === "unavailable") {
+          console.error(
+            `Couldn't list your enterprises (${choice.error}). Choose one later with: infracodebase enterprise use <slug>`
+          );
         }
         if (process.env.INFRACODEBASE_TOKEN) {
           console.error(
@@ -129,6 +134,9 @@ async function main() {
       case "logout": {
         const config = loadConfig({ apiUrl: overrides.apiUrl });
         const removed = await logout(config.apiUrl);
+        // The saved enterprise was chosen by whoever signed in; don't let it
+        // outlive their session.
+        await saveEnterprise(config.apiUrl, null).catch(() => undefined);
         const host = new URL(config.apiUrl).host;
         const signIn = `npx -y @infracodebase/mcp@latest login${
           config.apiUrl === DEFAULT_API_URL ? "" : ` --api-url ${config.apiUrl}`

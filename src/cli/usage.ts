@@ -34,7 +34,8 @@ Options:
         agents such as Devin, CI, and other machines without your browser.
   INFRACODEBASE_ENTERPRISE_ID
         Enterprise to work in when no enterprise_id is passed. Overrides the
-        one chosen at sign-in; useful with a token.
+        one chosen at sign-in. With a token, the sign-in choice is ignored, so
+        set this unless the token reaches exactly one enterprise.
 
 Docs: https://infracodebase.com/docs/developers/mcp`;
 }

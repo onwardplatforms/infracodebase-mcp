@@ -128,9 +128,10 @@ export interface ToolContext {
   /** Drop what is cached about a workspace's repo after a tool changes its link. */
   forgetWorkspaceRepo(workspaceId: string): void;
   /**
-   * The enterprise chosen at sign-in (or INFRACODEBASE_ENTERPRISE_ID), read on
-   * each call so `infracodebase enterprise use` applies without a restart.
-   * Undefined when none was chosen.
+   * The enterprise read tools fall back to: INFRACODEBASE_ENTERPRISE_ID, the
+   * choice saved at browser sign-in (read on each call so `infracodebase
+   * enterprise use` applies without a restart), or the caller's only
+   * enterprise. Undefined when none of those settles it.
    */
   chosenEnterpriseId(): Promise<string | undefined>;
 }

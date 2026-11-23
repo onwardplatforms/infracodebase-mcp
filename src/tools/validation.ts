@@ -67,9 +67,9 @@ const iacTool = z
 
 /**
  * enterprise_id on a read tool that lists one enterprise's resources. Optional
- * in the schema: when omitted, the enterprise chosen at sign-in (or
- * INFRACODEBASE_ENTERPRISE_ID) is used, and the call fails with how to choose
- * one when there is none. Tools that write keep a required enterprise_id.
+ * in the schema: when omitted, INFRACODEBASE_ENTERPRISE_ID, the enterprise
+ * chosen at sign-in, or the caller's only enterprise is used, and the call fails
+ * with how to choose one when none of those applies. Tools that write keep a required enterprise_id.
  */
 const chosenEnterpriseFields = new WeakSet<z.ZodType>();
 function chosenEnterpriseId(description: string) {
@@ -77,7 +77,7 @@ function chosenEnterpriseId(description: string) {
     .string()
     .min(1)
     .optional()
-    .describe(`${description} Defaults to the enterprise chosen at sign-in.`);
+    .describe(`${description} Defaults to the enterprise chosen at sign-in, or your only enterprise.`);
   chosenEnterpriseFields.add(field);
   return field;
 }

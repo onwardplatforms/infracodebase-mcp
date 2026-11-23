@@ -3,7 +3,14 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { InfracodebaseClient } from "./client.js";
-import { enterpriseLabel, findEnterprise, settleEnterprise, type EnterpriseRow } from "./enterprise-choice.js";
+import {
+  chosenEnterpriseResolver,
+  enterpriseLabel,
+  findEnterprise,
+  settleEnterprise,
+  type EnterpriseRow,
+} from "./enterprise-choice.js";
+import { describeCurrent } from "./cli/enterprise.js";
 import { readSavedEnterprise, saveEnterprise } from "./settings.js";
 
 const API = "https://infracodebase.example/api/v1";
@@ -63,6 +70,20 @@ describe("settleEnterprise", () => {
     expect(await readSavedEnterprise(API, settingsPath)).toBeNull();
   });
 
+  it("returns unavailable without touching the saved choice when the lookup fails", async () => {
+    await saveEnterprise(API, { id: "ent_b" }, settingsPath);
+    const client = {
+      listEnterprises: vi.fn(async () => {
+        throw new Error("503 Service Unavailable");
+      }),
+    } as unknown as InfracodebaseClient;
+
+    const choice = await settleEnterprise({ apiUrl: API, client, settingsPath });
+
+    expect(choice).toEqual({ kind: "unavailable", error: "503 Service Unavailable" });
+    expect((await readSavedEnterprise(API, settingsPath))?.id).toBe("ent_b");
+  });
+
   it("keeps choices per instance", async () => {
     await saveEnterprise("https://other.example/api/v1", { id: "ent_other" }, settingsPath);
     await settleEnterprise({ apiUrl: API, client: clientWith([ACME]), settingsPath });
@@ -85,5 +106,97 @@ describe("findEnterprise", () => {
     expect(findEnterprise([MINE_A, MINE_B], "REILLY")?.id).toBe("ent_b");
     expect(findEnterprise([MINE_A, MINE_B], "ent_a")?.slug).toBe("reilly-2");
     expect(findEnterprise([MINE_A, MINE_B], "nope")).toBeUndefined();
+  });
+});
+
+describe("chosenEnterpriseResolver", () => {
+  afterEach(() => {
+    delete process.env.INFRACODEBASE_ENTERPRISE_ID;
+  });
+
+  it("uses the saved choice under browser sign-in", async () => {
+    await saveEnterprise(API, { id: "ent_b" }, settingsPath);
+    const resolve = chosenEnterpriseResolver({
+      apiUrl: API,
+      authKind: "oauth",
+      client: clientWith([MINE_A, MINE_B]),
+      settingsPath,
+    });
+    expect(await resolve()).toBe("ent_b");
+  });
+
+  it("ignores the saved choice under a token, which may be someone else's", async () => {
+    await saveEnterprise(API, { id: "ent_b" }, settingsPath);
+    const resolve = chosenEnterpriseResolver({
+      apiUrl: API,
+      authKind: "legacy_token",
+      client: clientWith([MINE_A, MINE_B]),
+      settingsPath,
+    });
+    expect(await resolve()).toBeUndefined();
+  });
+
+  it("prefers INFRACODEBASE_ENTERPRISE_ID over everything", async () => {
+    process.env.INFRACODEBASE_ENTERPRISE_ID = "ent_env";
+    await saveEnterprise(API, { id: "ent_b" }, settingsPath);
+    const resolve = chosenEnterpriseResolver({
+      apiUrl: API,
+      authKind: "oauth",
+      client: clientWith([MINE_A, MINE_B]),
+      settingsPath,
+    });
+    expect(await resolve()).toBe("ent_env");
+  });
+
+  it("falls back to the only enterprise when nothing was chosen, looking it up once", async () => {
+    const client = clientWith([ACME]);
+    const resolve = chosenEnterpriseResolver({ apiUrl: API, authKind: "legacy_token", client, settingsPath });
+    expect(await resolve()).toBe("ent_acme");
+    expect(await resolve()).toBe("ent_acme");
+    expect(client.listEnterprises).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not guess among several enterprises, and retries a failed lookup", async () => {
+    expect(
+      await chosenEnterpriseResolver({
+        apiUrl: API,
+        authKind: "oauth",
+        client: clientWith([MINE_A, MINE_B]),
+        settingsPath,
+      })()
+    ).toBeUndefined();
+
+    const listEnterprises = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("network"))
+      .mockResolvedValueOnce({ data: [ACME] });
+    const resolve = chosenEnterpriseResolver({
+      apiUrl: API,
+      authKind: "oauth",
+      client: { listEnterprises } as unknown as InfracodebaseClient,
+      settingsPath,
+    });
+    expect(await resolve()).toBeUndefined();
+    expect(await resolve()).toBe("ent_acme");
+  });
+});
+
+describe("describeCurrent", () => {
+  afterEach(() => {
+    delete process.env.INFRACODEBASE_ENTERPRISE_ID;
+  });
+
+  it("reports INFRACODEBASE_ENTERPRISE_ID when it is what tools use", () => {
+    process.env.INFRACODEBASE_ENTERPRISE_ID = "ent_a";
+    expect(describeCurrent([MINE_A, MINE_B], "ent_b", "oauth")).toBe(
+      "Working in Reilly's Enterprise (reilly-2, Viewer) (set by INFRACODEBASE_ENTERPRISE_ID)."
+    );
+  });
+
+  it("reports the saved choice only under browser sign-in", () => {
+    expect(describeCurrent([MINE_A, MINE_B], "ent_b", "oauth")).toBe(
+      "Working in Reilly's Enterprise (reilly, Owner)."
+    );
+    expect(describeCurrent([MINE_A, MINE_B], "ent_b", "legacy_token")).toMatch(/ignored/);
   });
 });
